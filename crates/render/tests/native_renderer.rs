@@ -4,7 +4,9 @@
 mod support;
 
 use render::{Error, NativeOutput, NativeRenderer};
-use scene::frame::{BlendOp, DepthTest, Pass, PassTopology, Sampling, SourceKind, TargetName, TextureSet, Vertex};
+use scene::frame::{
+    BlendOp, DepthTest, GLYPH_LAYOUT_TEXTURE, GLYPH_TEXTURE, GlyphCache, Pass, PassTopology, Sampling, SourceKind, TargetName, TextureSet, Vertex,
+};
 use support::{HEIGHT, WIDTH, frame_of, near, pixel, sprite, sprite_at, vertex};
 
 fn out(width: u32, height: u32, samples: u32) -> NativeOutput {
@@ -269,5 +271,32 @@ fn refusals() {
     assert_eq!(renderer.read_target(TargetName::Store).unwrap(), vec![0u8; (WIDTH * HEIGHT * 4) as usize]);
     renderer.draw(&frame_of(vec![sprite(BlendOp::Opaque, 9, 9, 9, 0x80)])).unwrap();
     assert_eq!(pixel(&renderer.read_target(TargetName::Display).unwrap(), 1, 1)[0], 9);
+    assert_eq!(device.validation_errors(), 0);
+}
+
+// `--text sharp` covers the layouts a frame's cache passed through after its first (the Browser's), so a title drawn after
+// the cache was laid out again is as sharp as the rest; at the console's own size every texture is the console's.
+#[test]
+fn sharp_text_covers_every_glyph_layout() {
+    let Some(device) = support::device() else { return };
+    let resources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Resources/FNTOSD");
+    let Ok(file) = std::fs::read(&resources) else {
+        eprintln!("skipped: no {}", resources.display());
+        return;
+    };
+    let font = scene::font::Font::new(&file).unwrap();
+    let traced = glyph_enhance::outlines::build(&font, glyph_enhance::outlines::font_hash(&file), &[0x41, 0x42], 2);
+    let mut renderer = NativeRenderer::new(&device, support::shaders()).unwrap();
+    renderer.set_sharp_text(Some(std::sync::Arc::new(glyph_enhance::picture::SharpFont::traced(&traced))));
+    let cache = |cell_width: i32, cells: Vec<i32>| GlyphCache { address: 0xbc100, cell_width, cell_height: 44, width: 384, log_width: 9, log_height: 9, cells };
+    let (first, later) = (cache(40, vec![0x41, 0x42]), [cache(48, vec![0, 0x42, 0x41]), cache(40, vec![0x42])]);
+    for (output, texels) in [(out(1280, 896, 1), 1024), (out(1920, 1344, 1), 1536), (out(640, 448, 1), 512)] {
+        renderer.configure(&output).unwrap();
+        renderer.set_glyph_cache(&font, &first).unwrap();
+        renderer.set_glyph_layouts(&font, &later).unwrap();
+        for number in [GLYPH_TEXTURE, GLYPH_LAYOUT_TEXTURE, GLYPH_LAYOUT_TEXTURE + 1] {
+            assert_eq!(renderer.texture_extent(number), Some([texels, texels]), "texture {number:#x} at {}x{}", output.width, output.height);
+        }
+    }
     assert_eq!(device.validation_errors(), 0);
 }

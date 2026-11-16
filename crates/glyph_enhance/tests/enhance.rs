@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use glyph_enhance::atlas::SharpAtlas;
+use glyph_enhance::atlas::{Pictures, SharpAtlas};
 use glyph_enhance::layers::{CONSOLE_TABLE, Layers, combine, split};
 use glyph_enhance::outlines::{OutlineFont, block_zero_codes, build, font_hash, trace_glyph};
-use glyph_enhance::picture::sharp_picture;
+use glyph_enhance::picture::{SharpFont, SharpGlyph, averaged_back, sharp_picture};
 use glyph_enhance::raster::Canvas;
 use scene::font::Font;
 use scene::frame::GlyphCache;
@@ -71,7 +71,7 @@ fn every_block_zero_glyph_traces_and_draws() {
         assert!(outlines.glyphs.contains_key(&c), "ASCII {c:#x} keeps its picture");
     }
     for &code in &codes {
-        let (w, h, rgba) = sharp_picture(&font, code, outlines.glyphs.get(&code), 2).unwrap();
+        let (w, h, rgba) = sharp_picture(&font, code, outlines.glyphs.get(&code).map(SharpGlyph::from).as_ref(), 2).unwrap();
         assert_eq!((w, h), (68, 84));
         assert!(rgba.chunks(4).all(|p| p[3] <= 125 && p[0] == p[1] && p[1] == p[2]), "code {code:#x}");
     }
@@ -99,13 +99,15 @@ fn the_atlas_puts_each_picture_in_its_cell_and_nothing_outside_it() {
     let Some(file) = font_file() else { return };
     let font = Font::new(&file).unwrap();
     let outlines = build(&font, font_hash(&file), &[0x41, 0x57, 0x40], 2);
+    let shapes = SharpFont::traced(&outlines);
     let k = 3u32;
+    let mut pictures = Pictures::new(k);
     let mut atlas = SharpAtlas::new(k);
     let mut cells = vec![0; 72];
     cells[0] = 0x41;
     cells[10] = 0x57;
     cells[71] = 0x40;
-    let changed = atlas.update(&font, &outlines, &cache_of(cells.clone()));
+    let changed = atlas.update(&mut pictures, &font, &shapes, &cache_of(cells.clone()));
     assert_eq!((atlas.width, atlas.height), (512 * k, 512 * k));
     assert_eq!(changed.len(), 1, "the first update is the whole texture");
     let alpha = |x: u32, y: u32| atlas.rgba[((y * atlas.width + x) * 4 + 3) as usize];
@@ -127,43 +129,12 @@ fn the_atlas_puts_each_picture_in_its_cell_and_nothing_outside_it() {
         assert!((0..atlas.width).all(|x| alpha(x, y) == 0));
     }
     cells[10] = 0x40;
-    let changed = atlas.update(&font, &outlines, &cache_of(cells.clone()));
+    let changed = atlas.update(&mut pictures, &font, &shapes, &cache_of(cells.clone()));
     assert_eq!(changed.len(), 1);
     assert_eq!((changed[0].x, changed[0].y, changed[0].width, changed[0].height), (40 * k, 44 * k, 40 * k, 44 * k));
     let mut same = SharpAtlas::new(k);
-    same.update(&font, &outlines, &cache_of(cells));
+    same.update(&mut Pictures::new(k), &font, &shapes, &cache_of(cells));
     assert!(same.rgba == atlas.rgba, "an atlas brought up to date equals one made from the cells at once");
-}
-
-// Each glyph's picture drawn at 4 texels a pixel and averaged back to the picture's own pixels: per pixel the larger of
-// the premultiplied grey's and the alpha's difference (0..1) from the picture, its mean over the pixels either inks.
-fn averaged_back(font: &Font, code: i32, outline: Option<&glyph_enhance::outlines::GlyphOutline>) -> (f64, usize, f64) {
-    let k = 4usize;
-    let glyph = font.glyph(code).unwrap();
-    let original = Layers::of_glyph(font, &glyph).recombined();
-    let (pw, _, rgba) = sharp_picture(font, code, outline, k as u32).unwrap();
-    let (w, h) = (glyph.block.width as usize, glyph.block.height as usize);
-    let (mut sum, mut count, mut worst) = (0.0f64, 0usize, 0.0f64);
-    for y in 0..h {
-        for x in 0..w {
-            let (mut pg, mut pa) = (0.0f64, 0.0f64);
-            for j in 0..k {
-                for i in 0..k {
-                    let at = (((y + 1) * k + j) * pw as usize + (x + 1) * k + i) * 4;
-                    pg += f64::from(rgba[at]) / 255.0 * f64::from(rgba[at + 3]) / 125.0;
-                    pa += f64::from(rgba[at + 3]) / 125.0;
-                }
-            }
-            let (g0, a0) = original[y * w + x];
-            let d = (pg / (k * k) as f64 - f64::from(g0 * a0) / 125.0).abs().max((pa / (k * k) as f64 - f64::from(a0) / 125.0).abs());
-            worst = worst.max(d);
-            if a0 > 0.0 || pa > 0.0 {
-                sum += d;
-                count += 1;
-            }
-        }
-    }
-    (sum, count, worst)
 }
 
 // The faithfulness of the sharp text: every Latin glyph with outlines (ASCII, Latin-1, Latin Extended-A) averaged back
@@ -178,17 +149,18 @@ fn sharp_latin_glyphs_average_back_to_their_pictures() {
     let (mut sharp, mut today, mut count, mut worst) = (0.0f64, 0.0f64, 0usize, (0.0f64, 0));
     for &code in &codes {
         let Some(outline) = trace_glyph(&font, code) else { continue };
-        let (sum, n, pixel) = averaged_back(&font, code, Some(&outline));
-        let mean = sum / n.max(1) as f64;
+        let a = averaged_back(&font, code, Some(&SharpGlyph::from(&outline)), 4).unwrap();
+        let (sum, n, pixel) = (a.sum, a.inked, a.worst);
+        let mean = a.mean();
         assert!(pixel <= 0.65, "code {code:#x}: a pixel differs by {pixel}");
         assert!(mean <= 0.12, "code {code:#x}: mean {mean}");
         if mean > worst.0 {
             worst = (mean, code);
         }
-        let (bilinear, m, _) = averaged_back(&font, code, None);
+        let bilinear = averaged_back(&font, code, None, 4).unwrap();
         sharp += sum;
         count += n;
-        today += bilinear * n as f64 / m.max(1) as f64;
+        today += bilinear.mean() * n as f64;
     }
     let (sharp, today) = (sharp / count as f64, today / count as f64);
     eprintln!("{} Latin glyphs: sharp {sharp:.4}, bilinear {today:.4} (mean over inked pixels), worst glyph {:#x} {:.4}", codes.len(), worst.1, worst.0);

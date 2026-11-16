@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+ttf-parser = "0.25"
 scene = { path = "../scene" }
 assets = { path = "../assets" }
 
