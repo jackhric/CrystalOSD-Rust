@@ -200,6 +200,7 @@ pub struct TextDraw {
     pub glyph: GlyphDraw,
     pub icon: Rect,
     pub texture: i32,
+    pub layout: usize,
 }
 
 // `glyphs`: the cache as GS memory holds it when the text is drawn.
@@ -208,6 +209,7 @@ pub struct TextFrame {
     pub draws: Vec<TextDraw>,
     pub strings: Vec<StringRun>,
     pub glyphs: GlyphCache,
+    pub glyph_layouts: Vec<GlyphCache>,
 }
 
 // facts/text.md section 5: what the pages' strings read: the main menu, System Configuration's list and entries, the
@@ -525,6 +527,8 @@ pub struct Text<A> {
     library_colour: [f32; 4],
     cells: Vec<i32>,
     drawn: Vec<bool>,
+    layouts: Vec<GlyphCache>,
+    relayout: bool,
     width: i32,
     height: i32,
     // D_00370158 and D_0037015C: the width of the clock value's template and the time format it was measured for.
@@ -547,6 +551,8 @@ impl<A: Arithmetic> Text<A> {
             library_colour: [0.0; 4],
             cells: Vec::new(),
             drawn: Vec::new(),
+            layouts: Vec::new(),
+            relayout: false,
             width: 640,
             height: 224,
             template_width: 0,
@@ -853,7 +859,11 @@ impl<A: Arithmetic> Text<A> {
                     let cell_h = (block.height + 2 + 3) & !3;
                     if !(self.cache.format == 0x14 && self.cache.cell_w == cell_w && self.cache.cell_h == cell_h) {
                         if self.drawn.iter().any(|&drawn| drawn) {
-                            panic!("text: the cache is laid out again after a glyph of this frame was drawn from it");
+                            if !self.relayout {
+                                panic!("text: the cache is laid out again after a glyph of this frame was drawn from it");
+                            }
+                            let snapshot = self.layout();
+                            self.layouts.push(snapshot);
                         }
                         let pages = (self.cache.memory.wrapping_add(0x7ff) >> 11) as i32;
                         let mut across = A::to_int(A::sqrt(A::from_int(pages)));
@@ -989,7 +999,7 @@ impl<A: Arithmetic> Text<A> {
         let origin_xs = A::from_int(0x800 - (self.width >> 1));
         let origin_ys = A::from_int(0x800 - (self.height >> 1));
         let screen: Mat4 = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [origin_xs, origin_ys, 0.0, 1.0]];
-        let mut draw = TextDraw { kind: TextDrawKind::Glyph, ..Default::default() };
+        let mut draw = TextDraw { kind: TextDrawKind::Glyph, layout: self.layouts.len(), ..Default::default() };
         draw.glyph.region = [s0 - 1, s0 + block.width, t0 - 1, t0 + block.height];
         for k in 0..placed.len() {
             let on = Matrix::<A>::apply(&screen, &placed[k]);
@@ -1085,7 +1095,7 @@ impl<A: Arithmetic> Text<A> {
         self.width = input.width;
         self.height = input.height;
         if !self.after_pages {
-            self.drawn = vec![false; self.cells.len()];
+            self.fresh_frame();
         }
         self.after_pages = false;
         let ramps = input.ramps.unwrap_or(self.ramps);
@@ -1505,7 +1515,7 @@ impl<A: Arithmetic> Text<A> {
     pub fn pages(&mut self, input: &PagesInputs) -> PagesFrame {
         self.width = input.width;
         self.height = input.height;
-        self.drawn = vec![false; self.cells.len()];
+        self.fresh_frame();
         self.after_pages = true;
         let mut out = PagesFrame::default();
         self.main_menu_items(input, &mut out.text);
@@ -1519,22 +1529,102 @@ impl<A: Arithmetic> Text<A> {
     pub fn draw_string(&mut self, text: &[u8], width: i32, height: i32) -> TextFrame {
         self.width = width;
         self.height = height;
-        self.drawn = vec![false; self.cells.len()];
+        self.fresh_frame();
         let mut out = TextFrame::default();
         self.put_string(text, false, &mut out);
         self.finish(&mut out);
         out
     }
 
-    // The cache as GS memory holds it once the frame's text is drawn.
+    // The font calls of a caller outside the clock module (the Browser), one frame at a time: the frame's start, Font_SetRatio,
+    // Font_SetColor, Font_SetLocate, func_00213EE8 (the width), Font_PutsPackets, and the cache as GS memory holds it at the end.
+    // The Browser's frames lay the cache out again after drawing from it when a glyph of another cell size follows (measured,
+    // hddosd-110U-browser-text-session2 frame 241); the clock's paths keep refusing it, as Source/Scene does.
+    pub fn begin_frame(&mut self, width: i32, height: i32) {
+        self.width = width;
+        self.height = height;
+        self.fresh_frame();
+        self.relayout = true;
+    }
+
+    pub fn ratio(&mut self, ratio: f32) {
+        self.set_ratio(ratio);
+    }
+
+    pub fn colour(&mut self, r: i32, g: i32, b: i32, a: i32) {
+        self.set_colour(r, g, b, a);
+    }
+
+    pub fn locate(&mut self, x: i32, y: i32) {
+        self.set_locate(x, y);
+    }
+
+    pub fn measure(&mut self, text: &[u8], out: &mut TextFrame) -> i32 {
+        self.width_of(text, out)
+    }
+
+    pub fn put(&mut self, text: &[u8], out: &mut TextFrame) {
+        self.put_string(text, false, out);
+    }
+
+    pub fn end_frame(&self, out: &mut TextFrame) {
+        self.finish(out);
+    }
+
+    // scePFontSetTexMem (0x00214438): the cache given new GS memory (texture, size, colour table, in words); the list keeps its
+    // codes and order, and the next glyph lays the cache out again.
+    pub fn set_texture_memory(&mut self, texture: u32, memory: u32, table: u32) {
+        let c = &mut self.cache;
+        c.texture = texture;
+        c.memory = memory;
+        c.table = table;
+        c.format = 0;
+        c.cell_w = 0;
+        c.cell_h = 0;
+        c.cells = 0;
+        c.width = 0;
+        c.height = 0;
+        c.log_w = 0;
+        c.log_h = 0;
+        c.block = 0;
+        c.set_up = 0;
+        self.cells.clear();
+        self.drawn.clear();
+        self.layouts.clear();
+    }
+
+    fn fresh_frame(&mut self) {
+        self.drawn = vec![false; self.cells.len()];
+        self.layouts.clear();
+        self.relayout = false;
+    }
+
+    fn layout(&self) -> GlyphCache {
+        GlyphCache {
+            address: self.cache.texture,
+            cell_width: self.cache.cell_w,
+            cell_height: self.cache.cell_h,
+            width: self.cache.width,
+            log_width: self.cache.log_w,
+            log_height: self.cache.log_h,
+            cells: self.cells.clone(),
+        }
+    }
+
+    // The cache as GS memory holds it for each glyph: a layout drawn from and then laid out again within the frame is kept
+    // as it stood, the first in `glyphs` and the later ones in `glyph_layouts`.
     fn finish(&self, out: &mut TextFrame) {
-        out.glyphs.address = self.cache.texture;
-        out.glyphs.cell_width = self.cache.cell_w;
-        out.glyphs.cell_height = self.cache.cell_h;
-        out.glyphs.width = self.cache.width;
-        out.glyphs.log_width = self.cache.log_w;
-        out.glyphs.log_height = self.cache.log_h;
-        out.glyphs.cells = self.cells.clone();
+        let current = self.layout();
+        match self.layouts.split_first() {
+            None => {
+                out.glyphs = current;
+                out.glyph_layouts.clear();
+            }
+            Some((first, rest)) => {
+                out.glyphs = first.clone();
+                out.glyph_layouts = rest.iter().cloned().chain(std::iter::once(current)).collect();
+            }
+        }
     }
 }
 

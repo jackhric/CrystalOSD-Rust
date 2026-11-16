@@ -78,6 +78,16 @@ pub fn hash_frame(f: &Frame) -> u64 {
     x.i32(f.glyphs.log_height);
     x.size(f.glyphs.cells.len());
     x.i32s(&f.glyphs.cells);
+    for g in &f.glyph_layouts {
+        x.u32(g.address);
+        x.i32(g.cell_width);
+        x.i32(g.cell_height);
+        x.i32(g.width);
+        x.i32(g.log_width);
+        x.i32(g.log_height);
+        x.size(g.cells.len());
+        x.i32s(&g.cells);
+    }
     x.size(f.passes.len());
     for p in &f.passes {
         x.i32(p.target as i32);

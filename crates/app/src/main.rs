@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use app::boot_chain::BootPhase;
-use app::clock_assets::{rod_mesh_of, upload_clock_textures, upload_opening_textures};
+use app::clock_assets::{rod_mesh_of, upload_browser_textures, upload_clock_textures, upload_opening_textures};
 use app::debug_panel::{PanelInfo, Resolution};
 use app::golden::{Compared, GoldenChecker, GoldenLine, GoldenWriter, hash_bytes, hash_frame};
 use app::golden_scenario::{golden_frames, golden_scenario};
@@ -15,7 +15,7 @@ use app::options::{Options, Parsed, parse, strtoull};
 use app::png::write_png;
 use app::profile::Stage;
 use app::sdl::{self, SdlAudio, WindowHandle};
-use app::session::{Fatal, Session, SessionConfig, Shell, clock_time, console_now};
+use app::session::{BrowserPhase, Fatal, Session, SessionConfig, Shell, clock_time, console_now};
 use app::settings_store::{StoredSettings, read_stored};
 use assets::bytes::FNV_OFFSET;
 use assets::clock_textures::OPENING_TEXTURES;
@@ -24,6 +24,7 @@ use audio::clock_sound::{Video, clock_sound_sources, clock_sound_sources_from_de
 use audio::live_audio::{LiveAudio, LiveAudioOptions};
 use core_log::Log;
 use render::{Device, DeviceOptions, NativeOutput, NativeRenderer, vk};
+use scene::browser::screen::CardSlot;
 use scene::cold_start::ColdAssets;
 use scene::console_clock::{rtc_of, zone_of};
 use scene::font::Font;
@@ -334,7 +335,8 @@ fn run(args: &[String]) -> i32 {
         return 1;
     }
     let title = CString::new("CrystalOSD").expect("no NUL");
-    let flags: SDL_WindowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | if golden { SDL_WINDOW_HIDDEN } else { SDL_WindowFlags(0) };
+    let hidden = golden || !options.browser_shots.as_os_str().is_empty();
+    let flags: SDL_WindowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | if hidden { SDL_WINDOW_HIDDEN } else { SDL_WindowFlags(0) };
     // SAFETY: SDL is initialised.
     let window = WindowHandle(unsafe { SDL_CreateWindow(title.as_ptr(), 1280, 896, flags) });
     if window.0.is_null() {
@@ -389,6 +391,106 @@ struct Setup<'a> {
     cube_asset: Option<Asset>,
     font_file: Vec<u8>,
     program_file: Vec<u8>,
+}
+
+// --browser-shots dir --browser-script steps.json: the session from the main menu at rest, driven by the steps of the emulator's
+// snapshot scripts ({"press": button, "held": n}, {"to": frame}, {"snapshot": name}), rendered headless at 640 x 448 (or
+// --browser-shots-output WxHxSAMPLES) and saved as PNG. A press reaches the scene as late as the console's code sees a pad command: the Browser's pad words one pass later (read at
+// the pass's start, 0x00253B58), the clock's menus two frames later (its pad update runs after its frame functions,
+// facts/sound-events.md section 1); a press advances
+// held + 1 frames and a snapshot 2, as watson_pad and watson_snapshot do, so the frame numbers are the emulator's.
+fn browser_shots(shell: &mut Shell, renderer: &mut NativeRenderer<'_>, font: Option<&Arc<Font>>, options: &Options, info: &mut PanelInfo) -> Result<(), Fatal> {
+    let [width, height, samples] = options.browser_shots_output;
+    renderer.configure(&NativeOutput { width, height, samples })?;
+    let text = std::fs::read(&options.browser_script).map_err(|e| fatal(format!("{}: {e}", options.browser_script.display())))?;
+    let steps: serde_json::Value = serde_json::from_slice(&text).map_err(|e| fatal(format!("{}: {e}", options.browser_script.display())))?;
+    let start = shell.session.config.host_zone.to_sys_earliest(2026, 1, 1, 12) * NANOS;
+    shell.session.golden_start = start;
+    shell.session.fixed_now = Some(start);
+    shell.panel.mute = true;
+    std::fs::create_dir_all(&options.browser_shots).map_err(fatal)?;
+    let mut frame = 0u64;
+    let mut pending: Vec<(u64, u32, bool)> = Vec::new();
+    let mut phase = String::new();
+    let mut advance = |shell: &mut Shell, renderer: &mut NativeRenderer<'_>, pending: &mut Vec<(u64, u32, bool)>, frame: &mut u64| -> Result<(), Fatal> {
+        for &(at, bit, down) in pending.iter() {
+            if at == *frame {
+                if down {
+                    shell.session.reader.down(0, bit);
+                } else {
+                    shell.session.reader.up(0, bit);
+                }
+            }
+        }
+        shell.produce()?;
+        if let Some(font) = font
+            && shell.frame.texture_set != TextureSet::Opening
+        {
+            renderer.set_glyph_cache(font, &shell.frame.glyphs)?;
+            renderer.set_glyph_layouts(font, &shell.frame.glyph_layouts)?;
+        }
+        renderer.draw(&shell.frame)?;
+        let now = format!("{:?}", shell.session.browser_phase);
+        if now != phase {
+            println!("frame {}: Browser phase {}", *frame, now);
+            phase = now;
+        }
+        *frame += 1;
+        Ok(())
+    };
+    for step in steps.as_array().ok_or_else(|| fatal("the script is not a list"))? {
+        if let Some(button) = step.get("press").and_then(|b| b.as_str()) {
+            let held = step.get("held").and_then(|h| h.as_u64()).unwrap_or(6);
+            let bit = match button {
+                "cross" => bit_of(PadButton::Cross),
+                "circle" => bit_of(PadButton::Circle),
+                "triangle" => bit_of(PadButton::Triangle),
+                "square" => bit_of(PadButton::Square),
+                "left" => bit_of(PadButton::Left),
+                "right" => bit_of(PadButton::Right),
+                "up" => bit_of(PadButton::Up),
+                "down" => bit_of(PadButton::Down),
+                other => return Err(fatal(format!("unknown button {other}"))),
+            };
+            let latency = if shell.session.browser_phase == BrowserPhase::Running { 1 } else { 2 };
+            pending.push((frame + latency, bit, true));
+            pending.push((frame + latency + held, bit, false));
+            for _ in 0..=held {
+                advance(shell, renderer, &mut pending, &mut frame)?;
+            }
+        } else if let Some(to) = step.get("to").and_then(|t| t.as_u64()) {
+            while frame < to {
+                advance(shell, renderer, &mut pending, &mut frame)?;
+            }
+        } else if let Some(name) = step.get("snapshot").and_then(|n| n.as_str()) {
+            let stem = Path::new(name).file_stem().map_or(name.to_owned(), |s| s.to_string_lossy().into_owned());
+            shoot(renderer, TargetName::Display, &stem, &options.browser_shots, info)?;
+            for _ in 0..2 {
+                advance(shell, renderer, &mut pending, &mut frame)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+// --memory-card-1 / --memory-card-2: a raw card image (facts/memory-card-image.md), read only. A formatted image is a card of type 2
+// with the free count the console's library gives for it (assets::memory_card::library_free), the Browser shows max(free - 2, 0) KB.
+fn memory_cards(files: &[PathBuf; 2]) -> Result<[Option<CardSlot>; 2], Fatal> {
+    let mut out = [None, None];
+    for (n, file) in files.iter().enumerate() {
+        if file.as_os_str().is_empty() {
+            continue;
+        }
+        let image = assets::memory_card::read_image(file).map_err(|e| fatal(e.0))?;
+        let free = assets::memory_card::library_free(&image);
+        let slot = CardSlot { formatted: free.is_some(), free: free.unwrap_or(0) };
+        match free {
+            Some(f) => println!("memory card {}: {}: formatted, free {} clusters, the Browser shows {} KB Free", n + 1, file.display(), f, (f - 2).max(0)),
+            None => println!("memory card {}: {}: unformatted", n + 1, file.display()),
+        }
+        out[n] = Some(slot);
+    }
+    Ok(out)
 }
 
 fn fatal(what: impl ToString) -> Fatal {
@@ -459,6 +561,11 @@ fn body(setup: Setup<'_>, window: WindowHandle) -> Result<i32, Fatal> {
         None => load_rod_mesh(&options.mesh).map_err(fatal)?,
     };
     let cold_assets = ColdAssets { program: program.clone(), font: font.clone(), mesh, cube_mesh };
+    match assets::resources::decode_browser_sheets(&folder) {
+        Ok(sheets) => upload_browser_textures(&mut renderer, &sheets).map_err(fatal)?,
+        Err(error) => core_log::log!(Warn, App, "Browser sheets: {}", error.0),
+    }
+    let memory_cards = memory_cards(&options.memory_cards)?;
 
     let capture_all = options.capture == "all";
     let mut capture_at = BTreeSet::new();
@@ -483,6 +590,8 @@ fn body(setup: Setup<'_>, window: WindowHandle) -> Result<i32, Fatal> {
         settings: options.settings.clone(),
         lights_phase: options.lights_phase,
         towers_demo: options.towers_demo,
+        browser: !golden,
+        memory_cards,
     };
     let mut shell = Shell::new(Session::new(config, stored_at_start));
     shell.panel.mute = options.mute;
@@ -610,9 +719,10 @@ fn body(setup: Setup<'_>, window: WindowHandle) -> Result<i32, Fatal> {
             }
             shell.produce()?;
             if let Some(font) = &font
-                && shell.frame.texture_set == TextureSet::Clock
+                && shell.frame.texture_set != TextureSet::Opening
             {
                 renderer.set_glyph_cache(font, &shell.frame.glyphs)?;
+                renderer.set_glyph_layouts(font, &shell.frame.glyph_layouts)?;
             }
             renderer.draw(&shell.frame)?;
             let mut line = GoldenLine {
@@ -664,6 +774,10 @@ fn body(setup: Setup<'_>, window: WindowHandle) -> Result<i32, Fatal> {
             println!("golden: {} validation errors", device.validation_errors());
             code = 1;
         }
+    }
+    if !options.browser_shots.as_os_str().is_empty() {
+        browser_shots(&mut shell, &mut renderer, font.as_ref(), &options, &mut info)?;
+        return Ok(code);
     }
     let mut running = !golden;
     while running {
@@ -826,9 +940,10 @@ fn body(setup: Setup<'_>, window: WindowHandle) -> Result<i32, Fatal> {
         }
 
         if let Some(font) = &font
-            && shell.frame.texture_set == TextureSet::Clock
+            && shell.frame.texture_set != TextureSet::Opening
         {
             renderer.set_glyph_cache(font, &shell.frame.glyphs)?;
+            renderer.set_glyph_layouts(font, &shell.frame.glyph_layouts)?;
         }
         let Some(context) = device.begin_frame()? else {
             sdl::delay(10);

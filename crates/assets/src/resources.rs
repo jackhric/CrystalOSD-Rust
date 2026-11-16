@@ -2,7 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::bytes::{Error, Result, error, hash_of, read_file, write_file};
-use crate::clock_textures::{CLOCK_TEXTURES, OPENING_TEXTURES, PixelForm, convert_texture, raw_texture_size};
+use crate::clock_textures::{BROWSER_TEXTURE_HEADER, BROWSER_TEXTURES, CLOCK_TEXTURES, OPENING_TEXTURES, PixelForm, convert_texture, raw_texture_size};
 use crate::elf_image::ElfImage;
 use crate::expand::expand;
 use crate::image_cipher::{CipherTables, decrypt_image};
@@ -202,6 +202,45 @@ pub fn decode_folder(folder: &Path) -> Result<AssetSet> {
         }
     }
     Ok(set)
+}
+
+// facts/browser-chrome.md section 3: the Browser's eight TEXB sheets from the same TEXIMAGE (plain, or decrypted with the tables of
+// the hddosd.elf beside it), kept apart from decode_folder's set.
+pub fn decode_browser_sheets(folder: &Path) -> Result<Vec<Asset>> {
+    let files = read_sources(folder)?;
+    let index = |name: &str| files.iter().position(|f| f.source.name == name);
+    let Some(tex_image) = index("TEXIMAGE") else {
+        return error(format!("no TEXIMAGE in {}", folder.display()));
+    };
+    let mut container = files[tex_image].data.clone();
+    if romdir_start(&container, DEFAULT_LIMIT).is_none() {
+        let Some(elf) = index(PROGRAM_NAME).and_then(|p| ElfImage::new(&files[p].data).ok()).filter(is_hdd_osd_110u) else {
+            return error("TEXIMAGE is encrypted: HDD OSD 1.10U's hddosd.elf is needed beside it");
+        };
+        container = decrypt_image(&container, &CipherTables::from_program(&elf)?);
+    }
+    let Some(start) = romdir_start(&container, DEFAULT_LIMIT) else {
+        return error("TEXIMAGE holds no directory");
+    };
+    let entries = romdir_entries(&container, start)?;
+    let mut sheets = Vec::new();
+    for info in &BROWSER_TEXTURES {
+        let need = BROWSER_TEXTURE_HEADER + (info.width * info.height * 4) as usize;
+        let raw = expand(romdir_member(&container, &entries, info.name)?, 0, need + 64)?;
+        if (raw.size as usize) < need {
+            return error(format!("{}: {} bytes, a {} x {} sheet needs {need}", info.name, raw.size, info.width, info.height));
+        }
+        let data = raw.out[BROWSER_TEXTURE_HEADER..need].to_vec();
+        sheets.push(Asset {
+            name: info.name.to_owned(),
+            kind: AssetKind::TextureRgba32,
+            width: info.width,
+            height: info.height,
+            source: tex_image as u32,
+            data,
+        });
+    }
+    Ok(sheets)
 }
 
 /// Writes the BIOS ROM's members that bear a resource name, bytes unchanged, into `folder`; a file already there

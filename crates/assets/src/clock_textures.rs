@@ -134,3 +134,32 @@ pub fn convert_texture(raw: &[u8], width: u32, height: u32, form: PixelForm) -> 
     }
     Ok(out)
 }
+
+// facts/browser-chrome.md section 3: browser_texture_indices (0x002BD160) maps the Browser's sheets 0..7 to resources 53..60, the
+// TEXB* members of TEXIMAGE; each expands to a 0x14-byte header (type word 4) and CT32 texels, 64 wide (TEXBCDPB 64 x 128), kept
+// as stored (alpha 0x80 is 1). tbp: the allocation from 0x2800 in order, 64 blocks per 64 x 64 sheet, 128 for TEXBCDPB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BrowserTextureInfo {
+    pub name: &'static str,
+    pub index: i32,
+    pub width: u32,
+    pub height: u32,
+    pub tbp: u32,
+}
+
+const fn browser(name: &'static str, index: i32, height: u32, tbp: u32) -> BrowserTextureInfo {
+    BrowserTextureInfo { name, index, width: 64, height, tbp }
+}
+
+pub const BROWSER_TEXTURES: [BrowserTextureInfo; 8] = [
+    browser("TEXBNAV1", 0, 64, 0x2800),
+    browser("TEXBNAV2", 1, 64, 0x2840),
+    browser("TEXBARRW", 2, 64, 0x2880),
+    browser("TEXBBTTN", 3, 64, 0x28c0),
+    browser("TEXBCPAR", 4, 64, 0x2900),
+    browser("TEXBCDPB", 5, 128, 0x2940),
+    browser("TEXBOVAL", 6, 64, 0x29c0),
+    browser("TEXBICHI", 7, 64, 0x2a00),
+];
+
+pub const BROWSER_TEXTURE_HEADER: usize = 0x14;

@@ -1,4 +1,4 @@
-use assets::clock_textures::{CLOCK_TEXTURES, OPENING_TEXTURES};
+use assets::clock_textures::{BROWSER_TEXTURES, CLOCK_TEXTURES, OPENING_TEXTURES};
 use assets::resources::{AssetKind, AssetSet};
 use render::NativeRenderer;
 use scene::frame::TextureSet;
@@ -50,6 +50,19 @@ pub fn upload_opening_textures(renderer: &mut NativeRenderer<'_>, set: &AssetSet
             return Err(format!("opening texture {}: not {} x {}", info.name, info.width, info.height));
         }
         renderer.set_texture_in(TextureSet::Opening, info.index, texture.width, texture.height, &texture.data).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+// The Browser's eight TEXB sheets at their Browser texture numbers (assets::clock_textures::BROWSER_TEXTURES); throws when one is missing.
+pub fn upload_browser_textures(renderer: &mut NativeRenderer<'_>, sheets: &[assets::resources::Asset]) -> Result<(), String> {
+    for info in &BROWSER_TEXTURES {
+        let texture =
+            sheets.iter().find(|t| t.name == info.name && t.kind == AssetKind::TextureRgba32).ok_or_else(|| format!("no Browser sheet {}", info.name))?;
+        if texture.width != info.width || texture.height != info.height || texture.data.len() != info.width as usize * info.height as usize * 4 {
+            return Err(format!("Browser sheet {}: not {} x {}", info.name, info.width, info.height));
+        }
+        renderer.set_texture_in(TextureSet::Browser, info.index, texture.width, texture.height, &texture.data).map_err(|e| e.to_string())?;
     }
     Ok(())
 }

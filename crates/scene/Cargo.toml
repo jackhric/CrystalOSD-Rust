@@ -3,3 +3,7 @@ name = "scene"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[dev-dependencies]
+assets = { path = "../assets" }
+serde_json = "1.0.154"

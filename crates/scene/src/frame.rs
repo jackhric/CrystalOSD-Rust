@@ -44,6 +44,7 @@ pub enum TextureSet {
     #[default]
     Clock,
     Opening,
+    Browser,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -174,6 +175,14 @@ pub struct Pass {
 // cells[n] is the code whose picture cell n holds (0 for none).
 pub const GLYPH_TEXTURE: i32 = 10;
 
+// A cache laid out again after glyphs were drawn from it, within one frame: layout k + 1 is sampled as texture
+// GLYPH_LAYOUT_TEXTURE + k, from `Frame::glyph_layouts[k]`.
+pub const GLYPH_LAYOUT_TEXTURE: i32 = 0x100;
+
+pub fn glyph_texture(layout: usize) -> i32 {
+    if layout == 0 { GLYPH_TEXTURE } else { GLYPH_LAYOUT_TEXTURE + layout as i32 - 1 }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GlyphCache {
     pub address: u32,
@@ -196,6 +205,7 @@ pub struct Frame {
     pub passes: Vec<Pass>,
     pub text_at: usize,
     pub glyphs: GlyphCache,
+    pub glyph_layouts: Vec<GlyphCache>,
     pub texture_set: TextureSet,
     pub depth_bits: i32,
 }
@@ -210,6 +220,7 @@ impl Default for Frame {
             passes: Vec::new(),
             text_at: 0,
             glyphs: GlyphCache::default(),
+            glyph_layouts: Vec::new(),
             texture_set: TextureSet::Clock,
             depth_bits: 32,
         }

@@ -7,6 +7,8 @@ use audio::ee_sound_queue::SoundCommand as AudioCommand;
 use audio::live_audio::LiveAudio;
 use core_log::Log;
 use scene::arithmetic::NativeArithmetic;
+use scene::browser::screen::{BrowserScreen, BrowserSetup, CardSlot};
+use scene::browser::shell::Shell as BrowserWords;
 use scene::clock::{Clock, ClockInputs, FrameInputs};
 use scene::clock_date::BASE_ZONE;
 use scene::clock_state::ClockTime;
@@ -109,6 +111,25 @@ impl<C> FrameSource<C> for FunctionScreen<C> {
 
 pub type Chain = BootChain<OpeningScreen, FunctionScreen<Session>>;
 
+// The clock's last frame is P + 131 after the menu's Cross (facts/clock-transitions.md section 2) and the Browser's first pass
+// P + 135 (hddosd-110U-browser-sounds-enter: the thread starts in frame 134): three frames draw nothing, the third starts the thread.
+pub const TO_BROWSER_FRAMES: u32 = 3;
+// facts/browser-shell.md section 6: five frames between the Browser's last pass and the clock's first frame (HDD OSD, NTSC).
+pub const TO_CLOCK_FRAMES: u32 = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserPhase {
+    Off,
+    Leaving(u32),
+    Running,
+    HandOff(u32),
+}
+
+// newlib's rand: the state after `draws` calls (facts/clock-transitions.md section 3, the seven orb angles of a clock start).
+fn rand_after(state: u32, draws: u32) -> u32 {
+    (0..draws).fold(state, |s, _| s.wrapping_mul(0x41c6_4e6d).wrapping_add(12345))
+}
+
 pub struct SessionConfig {
     pub host: HostOptions,
     pub host_zone: HostZone,
@@ -119,6 +140,8 @@ pub struct SessionConfig {
     pub settings: PathBuf,
     pub lights_phase: Option<u32>,
     pub towers_demo: bool,
+    pub browser: bool,
+    pub memory_cards: [Option<CardSlot>; 2],
 }
 
 pub struct Session {
@@ -148,6 +171,11 @@ pub struct Session {
     pub boot_clock_forced: bool,
     pub boot_rand: u32,
     pub error: Option<Fatal>,
+    pub browser: Option<BrowserScreen<NativeArithmetic>>,
+    pub browser_phase: BrowserPhase,
+    pub browser_words: BrowserWords,
+    pub clock_wide: bool,
+    pub clock_rand: u32,
 }
 
 impl Session {
@@ -179,6 +207,11 @@ impl Session {
             boot_clock_forced: false,
             boot_rand: 0,
             error: None,
+            browser: None,
+            browser_phase: BrowserPhase::Off,
+            browser_words: BrowserWords::default(),
+            clock_wide: false,
+            clock_rand: 0,
         }
     }
 
@@ -320,10 +353,12 @@ impl Session {
             cold.rand_state = rand;
         }
         cold.gs_allocator = assets::clock_textures::clock_textures_end();
+        self.clock_wide = wide;
+        self.clock_rand = cold.rand_state;
         let start = cold_start::<NativeArithmetic>(&self.config.cold_assets, &cold).map_err(|e| Fatal::Error(e.0))?;
         let mut clock_inputs = start.clock;
         if let Some(menus) = clock_inputs.menus.as_mut() {
-            menus.options.browser_enters = false;
+            menus.options.browser_enters = self.config.browser;
         }
         clock_inputs.pass_names = self.config.pass_names;
         self.clock = Some(Clock::new(&clock_inputs).map_err(|e| Fatal::Error(e.0))?);
@@ -374,7 +409,80 @@ impl Session {
                 return Frame::default();
             }
         }
-        self.step_clock()
+        self.step_screen()
+    }
+
+    // The clock, or the Browser when the main menu's Cross on its first item has sent the clock away (scene::menus, browser_enters).
+    pub fn step_screen(&mut self) -> Frame {
+        match self.browser_phase {
+            BrowserPhase::Off => {
+                let frame = self.step_clock();
+                let state = self.clock().state();
+                if self.config.browser && state.scene.leaving != 0 && state.mode == 3 && state.overlay_level == 0 {
+                    self.browser_phase = BrowserPhase::Leaving(TO_BROWSER_FRAMES);
+                }
+                frame
+            }
+            BrowserPhase::Leaving(n) => {
+                if n > 1 {
+                    self.browser_phase = BrowserPhase::Leaving(n - 1);
+                } else {
+                    self.start_browser();
+                    self.browser_phase = BrowserPhase::Running;
+                }
+                Frame::default()
+            }
+            BrowserPhase::Running => {
+                let pad = self.reader.frame();
+                let browser = self.browser.as_mut().expect("a running Browser");
+                let out = browser.frame(&pad);
+                self.browser_words = browser.shell;
+                self.queue_sounds(&out.sounds);
+                if out.exit.is_some() {
+                    self.browser_phase = BrowserPhase::HandOff(TO_CLOCK_FRAMES);
+                }
+                if self.visited.last().is_none_or(|last| last != "Browser") {
+                    self.visited.push("Browser".to_owned());
+                }
+                out.frame.frame
+            }
+            BrowserPhase::HandOff(n) => {
+                if n > 0 {
+                    self.browser_phase = BrowserPhase::HandOff(n - 1);
+                    return Frame::default();
+                }
+                self.browser = None;
+                self.browser_phase = BrowserPhase::Off;
+                let rand = rand_after(self.clock_rand, 7);
+                let wide = self.clock_wide;
+                if let Err(error) = self.start_clock(wide, Some(rand)) {
+                    self.error = Some(error);
+                    return Frame::default();
+                }
+                self.clock_thread_done = false;
+                self.clock_thread_starts();
+                self.step_clock()
+            }
+        }
+    }
+
+    // The Browser's thread start (facts/browser-shell.md section 1) with the cards the host gave and the 0x8070 push (section 7).
+    fn start_browser(&mut self) {
+        let mechacon = self.clock.as_ref().and_then(|c| c.externals().mechacon_param).map_or(0, |p| p[0]);
+        let setup = BrowserSetup {
+            pal: self.config.host.pal,
+            width: 640,
+            height: if self.config.host.pal { 256 } else { 224 },
+            mechacon_param: mechacon,
+            cards: self.config.memory_cards,
+            program: Some(self.config.program.clone()),
+        };
+        let text = self.clock.as_ref().and_then(|c| c.text().cloned());
+        let browser = BrowserScreen::start(setup, &self.browser_words, text);
+        if let (Some(audio), Some(a3)) = (&mut self.audio, browser.spdif) {
+            audio.push_spdif(a3);
+        }
+        self.browser = Some(browser);
     }
 }
 
@@ -505,7 +613,7 @@ impl Shell {
                 s.queue_sounds(&commands);
             }
         } else {
-            self.frame = s.step_clock();
+            self.frame = s.step_screen();
         }
         if let Some(audio) = &mut s.audio {
             audio.set_muted(self.panel.mute);

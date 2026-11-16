@@ -89,6 +89,7 @@ pub struct LiveAudio {
     queue: EeSoundQueue,
     skip_drain: bool,
     spdif_pending: bool,
+    spdif_a3: u32,
     options: LiveAudioOptions,
     device: Option<Box<dyn AudioDevice>>,
     muted: bool,
@@ -114,6 +115,7 @@ impl LiveAudio {
             queue: EeSoundQueue::default(),
             skip_drain: false,
             spdif_pending: true,
+            spdif_a3: 0,
             options: options.clone(),
             device: None,
             muted: options.mute,
@@ -150,6 +152,13 @@ impl LiveAudio {
 
     pub fn discard_pending(&mut self) {
         self.queue.drain();
+    }
+
+    // facts/browser-shell.md section 7: the Browser's thread start stores D_001F0114 and the next drain pass sends
+    // sceSdRemote(1, 0x8070, 0xA, a3), the same send as the boot's (a3 0 for S/PDIF mode 0, 2 for mode 1).
+    pub fn push_spdif(&mut self, a3: u16) {
+        self.spdif_pending = true;
+        self.spdif_a3 = u32::from(a3);
     }
 
     pub fn queue(&mut self, command: SoundCommand, carried_a2: bool, carried_a3: bool) {
@@ -195,8 +204,8 @@ impl LiveAudio {
         }
         if self.spdif_pending {
             self.spdif_pending = false;
-            let d = DriverCommand { id: u32::from(SPDIF_ID), words: [10, 0, 0x1F0662, 0, 0], ..Default::default() };
-            core_log::log!(Debug, Audio, "send {:x} 10 0 0", SPDIF_ID);
+            let d = DriverCommand { id: u32::from(SPDIF_ID), words: [10, self.spdif_a3, 0x1F0662, 0, 0], ..Default::default() };
+            core_log::log!(Debug, Audio, "send {:x} 10 {} 0", SPDIF_ID, self.spdif_a3);
             send(self, d, SPDIF_ID);
         }
         sent
