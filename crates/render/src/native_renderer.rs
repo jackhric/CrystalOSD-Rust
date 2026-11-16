@@ -14,6 +14,8 @@ use crate::device::Device;
 use crate::error::{Error, Result, check, runtime};
 use crate::texture_file;
 
+mod sharp_glyphs;
+
 // The resolution the frame is drawn at (its scale is height / 448: the NTSC frame of two 224-line fields)
 // and the MSAA sample count, which replaces the OSD's edge antialiasing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,6 +267,7 @@ impl Default for Buffer {
 struct Texture {
     image: Image,
     largest_alpha: u8,
+    logical: [f32; 2],
 }
 
 type PipelineKey = (i32, i32, bool, u32);
@@ -295,6 +298,7 @@ pub struct NativeRenderer<'d> {
     ranges: Vec<(u32, u32)>,
     glyphs: GlyphCache,
     glyph_layouts: Vec<GlyphCache>,
+    sharp: Option<sharp_glyphs::SharpGlyphs>,
 }
 
 fn read_spirv(path: &Path) -> Result<Vec<u32>> {
@@ -333,6 +337,7 @@ impl<'d> NativeRenderer<'d> {
             ranges: Vec::new(),
             glyphs: GlyphCache::default(),
             glyph_layouts: Vec::new(),
+            sharp: None,
         };
         let d = device.device();
         // SAFETY: creating objects on a valid device; Drop destroys them (null handles are ignored).
@@ -571,7 +576,7 @@ impl<'d> NativeRenderer<'d> {
             self.destroy_image(&mut image);
             return Err(e);
         }
-        self.textures.insert(key, Texture { image, largest_alpha });
+        self.textures.insert(key, Texture { image, largest_alpha, logical: [width as f32, height as f32] });
         Ok(())
     }
 
@@ -579,6 +584,9 @@ impl<'d> NativeRenderer<'d> {
     // before it filters, so the table is applied here, once, and the pass samples the colours.
     pub fn set_glyph_cache(&mut self, font: &Font, cache: &GlyphCache) -> Result<()> {
         if *cache == self.glyphs && self.textures.contains_key(&(CLOCK_SET, GLYPH_TEXTURE)) {
+            return Ok(());
+        }
+        if self.set_sharp_glyph_cache(font, cache)? {
             return Ok(());
         }
         let image = scene::text::glyph_cache_image(font, cache).map_err(|e| crate::error::Error::Runtime(e.0))?;
@@ -651,6 +659,9 @@ impl<'d> NativeRenderer<'d> {
         unsafe { self.device.device().device_wait_idle() }.ok();
         self.destroy_targets();
         self.output = *output;
+        if self.sharp.is_some() {
+            self.glyphs = GlyphCache::default();
+        }
         self.alpha_bound = [0; TARGETS];
         let samples = vk::SampleCountFlags::from_raw(output.samples);
         for i in 0..=TargetName::Work as usize {
@@ -1048,9 +1059,9 @@ impl<'d> NativeRenderer<'d> {
                 }
                 let image = &found.image;
                 view = image.view;
-                push.source[0] = image.width as f32;
+                push.source[0] = found.logical[0];
                 push.source[2] = image.width as f32;
-                push.source[1] = image.height as f32;
+                push.source[1] = found.logical[1];
                 push.source[3] = image.height as f32;
                 push.mode[0] = 1;
                 push.shade[2] = 255;
