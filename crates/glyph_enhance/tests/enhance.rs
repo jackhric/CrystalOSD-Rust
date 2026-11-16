@@ -9,9 +9,8 @@ use scene::font::Font;
 use scene::frame::GlyphCache;
 
 fn font_file() -> Option<Vec<u8>> {
-    let folder = std::env::var_os("CRYSTALOSD_RESOURCES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../CrystalOSD/Resources"));
+    let folder =
+        std::env::var_os("CRYSTALOSD_RESOURCES").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Resources"));
     match std::fs::read(folder.join("FNTOSD")) {
         Ok(file) => Some(file),
         Err(_) => {

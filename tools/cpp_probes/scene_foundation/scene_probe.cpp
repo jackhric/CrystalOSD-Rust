@@ -18,7 +18,7 @@
 
 using namespace scene;
 
-static const char* kResources = "/home/jackh/Documents/git/CrystalOSD/Resources/";
+static const char* kResources = "../CrystalOSD/Resources/";
 
 void h4(Hash& h, const Vec4& v) { for (float x : v) h.f32(x); }
 void hm(Hash& h, const Mat4& m) { for (const Vec4& r : m) h4(h, r); }

@@ -141,9 +141,8 @@ fn vectors() -> Option<PathBuf> {
 }
 
 fn font() -> Option<Font> {
-    let folder = std::env::var_os("CRYSTALOSD_RESOURCES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../CrystalOSD/Resources"));
+    let folder =
+        std::env::var_os("CRYSTALOSD_RESOURCES").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Resources"));
     let set = assets::resources::decode_folder(&folder).ok()?;
     Font::new(&set.find("FNTOSD")?.data).ok()
 }

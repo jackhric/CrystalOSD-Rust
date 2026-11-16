@@ -5,7 +5,7 @@
 #   Synthetic: writes the synthetic stream.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-CPP=/home/jackh/Documents/git/CrystalOSD
+CPP=../CrystalOSD
 B=$CPP/build/linux
 D=$CPP/build/_deps
 OUT=$HERE/bin

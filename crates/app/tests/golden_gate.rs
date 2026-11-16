@@ -6,7 +6,7 @@ fn root() -> PathBuf {
 }
 
 fn resources() -> Option<PathBuf> {
-    let folder = std::env::var_os("CRYSTALOSD_RESOURCES").map(PathBuf::from).unwrap_or_else(|| root().join("../CrystalOSD/Resources"));
+    let folder = std::env::var_os("CRYSTALOSD_RESOURCES").map(PathBuf::from).unwrap_or_else(|| root().join("Resources"));
     if folder.join("TEXIMAGE").is_file() && folder.join("hddosd.elf").is_file() {
         Some(folder)
     } else {

@@ -9,7 +9,7 @@ use scene::font::Font;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(PathBuf::from);
-    let font_path = value("--font").unwrap_or_else(|| PathBuf::from("../CrystalOSD/Resources/FNTOSD"));
+    let font_path = value("--font").unwrap_or_else(|| PathBuf::from("Resources/FNTOSD"));
     let file = match std::fs::read(&font_path) {
         Ok(f) => f,
         Err(e) => {

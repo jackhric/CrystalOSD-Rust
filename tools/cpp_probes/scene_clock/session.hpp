@@ -26,7 +26,7 @@ inline RodMesh meshAt(const ProgramImage& p, uint32_t faces, uint32_t pos, uint3
     return m;
 }
 inline ColdAssets coldAssets() {
-    const std::string res = "/home/jackh/Documents/git/CrystalOSD/Resources/";
+    const std::string res = "../CrystalOSD/Resources/";
     auto program = std::make_shared<const ProgramImage>(readAll(res + "hddosd.elf"));
     auto font = std::make_shared<const Font>(readAll(res + "FNTOSD"));
     return {program, font, meshAt(*program, 16, 0x002b4b90, 0x002b5390, 0x002b4f90), meshAt(*program, 6, 0x002b5790, 0x002b5910, 0x002b5970)};

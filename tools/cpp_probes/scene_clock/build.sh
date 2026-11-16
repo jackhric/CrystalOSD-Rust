@@ -3,7 +3,7 @@
 # SCENE_NATIVE_ONLY) and "_strict" against the tests' strict objects (ClockScene Release: -O3 -ffp-model=strict -ffp-contract=off).
 set -e
 cd "$(dirname "$0")"
-R=/home/jackh/Documents/git/CrystalOSD
+R=../CrystalOSD
 B=$R/build/linux/CMakeFiles
 for p in scenario cold text cubes extra; do
   clang++ -std=c++26 -O3 -DNDEBUG -ffp-contract=off -DSCENE_NATIVE_ONLY -I$R/Source ${p}_probe.cpp $R/Source/App/Golden.cpp $B/ClockSceneNative.dir/Release/Source/Scene/*.o -o ${p}_app

@@ -7,9 +7,8 @@ use assets::program::program_digest;
 use assets::resources::decode_folder;
 
 fn resources() -> Option<PathBuf> {
-    let folder = std::env::var_os("CRYSTALOSD_RESOURCES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../CrystalOSD/Resources"));
+    let folder =
+        std::env::var_os("CRYSTALOSD_RESOURCES").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Resources"));
     if folder.join("TEXIMAGE").is_file() {
         Some(folder)
     } else {

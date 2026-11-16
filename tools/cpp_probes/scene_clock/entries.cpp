@@ -6,7 +6,7 @@
 using namespace scene;
 static std::vector<uint8_t> readAll(const char* p) { std::ifstream f(p, std::ios::binary); return {std::istreambuf_iterator<char>(f), {}}; }
 int main() {
-    auto program = std::make_shared<const ProgramImage>(readAll("/home/jackh/Documents/git/CrystalOSD/Resources/hddosd.elf"));
+    auto program = std::make_shared<const ProgramImage>(readAll("../CrystalOSD/Resources/hddosd.elf"));
     for (int pal = 0; pal < 2; ++pal) {
         ColdAssets a{program, nullptr, {}, {}};
         ColdInputs in; in.pal = pal; in.rtc = {2026,1,2,3,4,5};

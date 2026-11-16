@@ -3,9 +3,8 @@
 use std::path::PathBuf;
 
 pub fn resources() -> Option<PathBuf> {
-    let folder = std::env::var_os("CRYSTALOSD_RESOURCES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../CrystalOSD/Resources"));
+    let folder =
+        std::env::var_os("CRYSTALOSD_RESOURCES").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Resources"));
     if folder.join("SNDIMAGE").is_file() && folder.join("hddosd.elf").is_file() {
         Some(folder)
     } else {

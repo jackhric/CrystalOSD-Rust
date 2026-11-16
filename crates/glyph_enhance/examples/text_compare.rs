@@ -303,7 +303,7 @@ fn sheet(glyphs: &mut Glyphs, lines: &[Line], scale: f64, rows: &[Row], path: &P
 
 fn main() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let font_path = std::env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| root.join("../CrystalOSD/Resources/FNTOSD"));
+    let font_path = std::env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| root.join("Resources/FNTOSD"));
     let font = Font::load(&font_path).expect("FNTOSD");
     let out = root.join("out/text-compare");
     std::fs::create_dir_all(&out).unwrap();

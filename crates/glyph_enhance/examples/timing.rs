@@ -8,7 +8,7 @@ use scene::font::Font;
 use scene::frame::GlyphCache;
 
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or_else(|| "../CrystalOSD/Resources/FNTOSD".to_owned());
+    let path = std::env::args().nth(1).unwrap_or_else(|| "Resources/FNTOSD".to_owned());
     let file = std::fs::read(&path).expect("FNTOSD");
     let font = Font::new(&file).unwrap();
     let codes = block_zero_codes(&font);

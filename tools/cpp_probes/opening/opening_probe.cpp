@@ -16,7 +16,7 @@
 using namespace scene;
 using namespace scene::opening;
 
-static const char* kElf = "/home/jackh/Documents/git/CrystalOSD/Resources/hddosd.elf";
+static const char* kElf = "../CrystalOSD/Resources/hddosd.elf";
 
 // Canonical mode hashes every NaN bit pattern as 0x7fc00000: when two NaNs meet, which one an SSE instruction returns follows the
 // operand order the compiler picked (clang -O2 commutes, -O0 does not), so NaN payloads are not part of the C++'s meaning.

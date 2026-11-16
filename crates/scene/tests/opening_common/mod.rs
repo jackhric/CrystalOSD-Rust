@@ -118,9 +118,8 @@ pub fn hash_frame(f: &Frame) -> u64 {
 }
 
 pub fn program() -> Option<ProgramImage> {
-    let folder = std::env::var_os("CRYSTALOSD_RESOURCES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../CrystalOSD/Resources"));
+    let folder =
+        std::env::var_os("CRYSTALOSD_RESOURCES").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Resources"));
     let path = folder.join("hddosd.elf");
     if !path.is_file() {
         eprintln!("skipped: no hddosd.elf in {}", folder.display());

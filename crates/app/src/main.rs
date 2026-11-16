@@ -44,7 +44,7 @@ fn resource_folder(options: &Options) -> PathBuf {
         return options.resources.clone();
     }
     let beside = sdl::base_path().unwrap_or_else(|| std::env::current_dir().unwrap_or_default()).join("resources");
-    let development = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../CrystalOSD/Resources"));
+    let development = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Resources"));
     if options.bios.as_os_str().is_empty() && !beside.is_dir() && development.is_dir() {
         return development.canonicalize().unwrap_or_else(|_| development.to_path_buf());
     }

@@ -34,7 +34,7 @@ static RodMesh meshAt(const ProgramImage& p, uint32_t faces, uint32_t pos, uint3
 struct Press { uint64_t after; uint32_t bit; };
 
 int main(int argc, char** argv) {
-    const char* res = "/home/jackh/Documents/git/CrystalOSD/Resources/";
+    const char* res = "../CrystalOSD/Resources/";
     auto program = std::make_shared<const ProgramImage>(readAll((std::string(res) + "hddosd.elf").c_str()));
     auto font = std::make_shared<const Font>(readAll((std::string(res) + "FNTOSD").c_str()));
     const ColdAssets assets{program, font, meshAt(*program, 16, 0x002b4b90, 0x002b5390, 0x002b4f90), meshAt(*program, 6, 0x002b5790, 0x002b5910, 0x002b5970)};
