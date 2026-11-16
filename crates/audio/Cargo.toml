@@ -1,0 +1,9 @@
+[package]
+name = "audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+assets = { path = "../assets" }
+core_log = { path = "../core_log" }

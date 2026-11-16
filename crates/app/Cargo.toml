@@ -1,0 +1,28 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "crystalosd"
+path = "src/main.rs"
+
+[dependencies]
+assets = { path = "../assets" }
+scene = { path = "../scene" }
+audio = { path = "../audio" }
+render = { path = "../render" }
+core_log = { path = "../core_log" }
+sdl3-sys = { version = "0.7.3", features = ["use-ash-v0-38"] }
+serde_json = "1.0.154"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono-tz = "0.10.4"
+dear-imgui-sys = { version = "0.22.0", optional = true }
+
+[build-dependencies]
+cc = { version = "1", optional = true }
+
+[features]
+default = ["debug-panel"]
+debug-panel = ["dep:dear-imgui-sys", "dep:cc"]

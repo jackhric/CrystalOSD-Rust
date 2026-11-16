@@ -1,0 +1,15 @@
+[package]
+name = "render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ash = "0.38"
+vk-mem = "0.5"
+png = "0.18"
+scene = { path = "../scene" }
+
+[dev-dependencies]
+assets = { path = "../assets" }
+libloading = "0.8"
