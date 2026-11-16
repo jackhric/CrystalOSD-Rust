@@ -13,6 +13,7 @@ assets = { path = "../assets" }
 scene = { path = "../scene" }
 audio = { path = "../audio" }
 render = { path = "../render" }
+glyph_enhance = { path = "../glyph_enhance" }
 core_log = { path = "../core_log" }
 sdl3-sys = { version = "0.7.3", features = ["use-ash-v0-38"] }
 serde_json = "1.0.154"

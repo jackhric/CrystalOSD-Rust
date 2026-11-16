@@ -9,6 +9,7 @@ ash = "0.38"
 vk-mem = "0.5"
 png = "0.18"
 scene = { path = "../scene" }
+glyph_enhance = { path = "../glyph_enhance" }
 
 [dev-dependencies]
 assets = { path = "../assets" }

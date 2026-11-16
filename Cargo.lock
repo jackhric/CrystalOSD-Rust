@@ -28,6 +28,7 @@ dependencies = [
  "chrono-tz",
  "core_log",
  "dear-imgui-sys",
+ "glyph_enhance",
  "render",
  "scene",
  "sdl3-sys",
@@ -202,6 +203,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "glyph_enhance"
+version = "0.1.0"
+dependencies = [
+ "assets",
+ "png",
+ "scene",
+]
+
+[[package]]
 name = "iana-time-zone"
 version = "0.1.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -372,6 +382,7 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "assets",
+ "glyph_enhance",
  "libloading",
  "png",
  "scene",

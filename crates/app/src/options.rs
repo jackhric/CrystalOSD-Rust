@@ -36,6 +36,8 @@ pub struct Options {
     pub golden: String,
     pub golden_file: PathBuf,
     pub golden_output: String,
+    pub text_sharp: bool,
+    pub text_outlines: PathBuf,
 }
 
 impl Default for Options {
@@ -74,11 +76,13 @@ impl Default for Options {
             golden: String::new(),
             golden_file: PathBuf::new(),
             golden_output: "native".to_owned(),
+            text_sharp: false,
+            text_outlines: PathBuf::new(),
         }
     }
 }
 
-pub const USAGE: &str = "usage: CrystalOSD [--resources dir] [--bios rom.bin] [--smoke] [--soak seconds] [--skip-boot] [--clock] [--pal] [--language N] [--aspect N] [--towers none|demo] [--lights-phase N] [--opening-textures dir] [--capture all|n,n,...] [--mute] [--audio-wav out.wav] [--log file] [--trace file.jsonl] [--profile] [--golden record|check file] [--golden-output native|x2-msaa4] [--no-validation] [--validate sync] [--shaders dir]\n                    [--settings settings.json] [--no-save] [--screenshots dir] [--textures dir] [--mesh rod-mesh.json] [--cube-mesh cube-mesh.json] [--font FNTOSD] [--program hddosd.elf]\n";
+pub const USAGE: &str = "usage: CrystalOSD [--resources dir] [--bios rom.bin] [--smoke] [--soak seconds] [--skip-boot] [--clock] [--pal] [--language N] [--aspect N] [--towers none|demo] [--lights-phase N] [--opening-textures dir] [--capture all|n,n,...] [--mute] [--audio-wav out.wav] [--log file] [--trace file.jsonl] [--profile] [--golden record|check file] [--golden-output native|x2-msaa4] [--no-validation] [--validate sync] [--shaders dir]\n                    [--settings settings.json] [--no-save] [--screenshots dir] [--textures dir] [--mesh rod-mesh.json] [--cube-mesh cube-mesh.json] [--font FNTOSD] [--program hddosd.elf]\n                    [--text original|sharp] [--text-outlines file]\n";
 
 fn skip_space(s: &[u8]) -> usize {
     s.iter().take_while(|c| matches!(c, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r')).count()
@@ -247,7 +251,11 @@ pub fn parse(args: &[String]) -> Parsed {
                 options.golden_file = args[i + 2].clone().into();
                 i += 2;
             }
-            "--golden-output" if more && (args[i + 1] == "native" || args[i + 1] == "x2-msaa4") => options.golden_output = next!(),
+            "--golden-output" if more && (args[i + 1] == "native" || args[i + 1] == "x2-msaa4" || custom_output(&args[i + 1]).is_some()) => {
+                options.golden_output = next!()
+            }
+            "--text" if more && (args[i + 1] == "original" || args[i + 1] == "sharp") => options.text_sharp = next!() == "sharp",
+            "--text-outlines" if more => options.text_outlines = next!().into(),
             _ => {
                 eprint!("{USAGE}");
                 return Parsed::Exit(1);
@@ -256,4 +264,15 @@ pub fn parse(args: &[String]) -> Parsed {
         i += 1;
     }
     Parsed::Run(Box::new(options), explicit)
+}
+
+// A golden output other than the two baselines': WIDTHxHEIGHT or WIDTHxHEIGHT-msaaN (pixels then are not compared).
+pub fn custom_output(text: &str) -> Option<(u32, u32, u32)> {
+    let (size, samples) = match text.split_once("-msaa") {
+        Some((size, n)) => (size, n.parse().ok()?),
+        None => (text, 1),
+    };
+    let (w, h) = size.split_once('x')?;
+    let (w, h): (u32, u32) = (w.parse().ok()?, h.parse().ok()?);
+    (w > 0 && h > 0 && w <= 16384 && h <= 16384 && [1, 2, 4, 8].contains(&samples)).then_some((w, h, samples))
 }

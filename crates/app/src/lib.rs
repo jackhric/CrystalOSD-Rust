@@ -17,3 +17,4 @@ pub mod screens;
 pub mod sdl;
 pub mod session;
 pub mod settings_store;
+pub mod sharp_text;

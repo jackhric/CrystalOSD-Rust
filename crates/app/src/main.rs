@@ -458,6 +458,11 @@ fn body(setup: Setup<'_>, window: WindowHandle) -> Result<i32, Fatal> {
         Some(asset) => rod_mesh_of(asset).map_err(fatal)?,
         None => load_rod_mesh(&options.mesh).map_err(fatal)?,
     };
+    if options.text_sharp
+        && let Some(font) = &font
+    {
+        app::sharp_text::enable(&mut renderer, font, &font_file, &options.text_outlines);
+    }
     let cold_assets = ColdAssets { program: program.clone(), font: font.clone(), mesh, cube_mesh };
 
     let capture_all = options.capture == "all";
@@ -578,17 +583,29 @@ fn body(setup: Setup<'_>, window: WindowHandle) -> Result<i32, Fatal> {
     let (mut interval_sum, mut interval_worst) = (0.0f64, 0.0f64);
     let mut fps = 0f32;
     if golden {
-        renderer.configure(&if options.golden_output == "x2-msaa4" {
+        let custom = app::options::custom_output(&options.golden_output);
+        renderer.configure(&if let Some((width, height, samples)) = custom {
+            NativeOutput { width, height, samples }
+        } else if options.golden_output == "x2-msaa4" {
             NativeOutput { width: 1280, height: 896, samples: 4 }
         } else {
             NativeOutput { width: 640, height: 448, samples: 1 }
         })?;
+        // Sharp text and outputs other than the baselines' are not the console's picture: their scene and sound are checked.
+        let pixels_compared = !options.text_sharp && custom.is_none();
+        if !pixels_compared && options.golden == "record" {
+            println!("golden: a record is the console's picture: not with --text sharp or a custom --golden-output");
+            return Ok(1);
+        }
+        if !pixels_compared {
+            println!("golden: pixels not compared ({}), scene and sound are", if options.text_sharp { "--text sharp" } else { "a custom --golden-output" });
+        }
         let mut writer = None;
         let mut checker = None;
         if options.golden == "record" {
             writer = Some(GoldenWriter::new(&options.golden_file).map_err(|_| fatal(format!("golden: cannot write {}", options.golden_file.display())))?);
         } else {
-            checker = Some(GoldenChecker::new(&options.golden_file, Compared::ALL));
+            checker = Some(GoldenChecker::new(&options.golden_file, Compared { pixels: pixels_compared, ..Compared::ALL }));
         }
         let presses = golden_scenario();
         let mut clock_frames = 0u64;
@@ -625,6 +642,10 @@ fn body(setup: Setup<'_>, window: WindowHandle) -> Result<i32, Fatal> {
             let pixels = renderer.read_target(TargetName::Display)?;
             line.pixels = hash_bytes(&pixels, FNV_OFFSET);
             line.sound = shell.sound_hash();
+            if capture_at.contains(&shell.logic_frames) {
+                let name = format!("golden-{:04}-{}", shell.logic_frames, if options.text_sharp { "sharp" } else { "original" });
+                shoot(&mut renderer, TargetName::Display, &name, &options.screenshots, &mut info)?;
+            }
             if let Some(writer) = &mut writer {
                 let _ = writer.add(&line);
             } else if let Some(checker) = &mut checker

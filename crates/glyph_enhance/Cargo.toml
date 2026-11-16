@@ -1,0 +1,12 @@
+[package]
+name = "glyph_enhance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+scene = { path = "../scene" }
+assets = { path = "../assets" }
+
+[dev-dependencies]
+png = "0.18"
