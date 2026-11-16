@@ -394,13 +394,14 @@ struct Setup<'a> {
 }
 
 // --browser-shots dir --browser-script steps.json: the session from the main menu at rest, driven by the steps of the emulator's
-// snapshot scripts ({"press": button, "held": n}, {"to": frame}, {"snapshot": name}), rendered headless at 640 x 448 and saved as
-// PNG. A press reaches the scene as late as the console's code sees a pad command: the Browser's pad words one pass later (read at
+// snapshot scripts ({"press": button, "held": n}, {"to": frame}, {"snapshot": name}), rendered headless at 640 x 448 (or
+// --browser-shots-output WxHxSAMPLES) and saved as PNG. A press reaches the scene as late as the console's code sees a pad command: the Browser's pad words one pass later (read at
 // the pass's start, 0x00253B58), the clock's menus two frames later (its pad update runs after its frame functions,
 // facts/sound-events.md section 1); a press advances
 // held + 1 frames and a snapshot 2, as watson_pad and watson_snapshot do, so the frame numbers are the emulator's.
 fn browser_shots(shell: &mut Shell, renderer: &mut NativeRenderer<'_>, font: Option<&Arc<Font>>, options: &Options, info: &mut PanelInfo) -> Result<(), Fatal> {
-    renderer.configure(&NativeOutput { width: 640, height: 448, samples: 1 })?;
+    let [width, height, samples] = options.browser_shots_output;
+    renderer.configure(&NativeOutput { width, height, samples })?;
     let text = std::fs::read(&options.browser_script).map_err(|e| fatal(format!("{}: {e}", options.browser_script.display())))?;
     let steps: serde_json::Value = serde_json::from_slice(&text).map_err(|e| fatal(format!("{}: {e}", options.browser_script.display())))?;
     let start = shell.session.config.host_zone.to_sys_earliest(2026, 1, 1, 12) * NANOS;
@@ -423,9 +424,10 @@ fn browser_shots(shell: &mut Shell, renderer: &mut NativeRenderer<'_>, font: Opt
         }
         shell.produce()?;
         if let Some(font) = font
-            && shell.frame.texture_set == TextureSet::Clock
+            && shell.frame.texture_set != TextureSet::Opening
         {
             renderer.set_glyph_cache(font, &shell.frame.glyphs)?;
+            renderer.set_glyph_layouts(font, &shell.frame.glyph_layouts)?;
         }
         renderer.draw(&shell.frame)?;
         let now = format!("{:?}", shell.session.browser_phase);
@@ -717,9 +719,10 @@ fn body(setup: Setup<'_>, window: WindowHandle) -> Result<i32, Fatal> {
             }
             shell.produce()?;
             if let Some(font) = &font
-                && shell.frame.texture_set == TextureSet::Clock
+                && shell.frame.texture_set != TextureSet::Opening
             {
                 renderer.set_glyph_cache(font, &shell.frame.glyphs)?;
+                renderer.set_glyph_layouts(font, &shell.frame.glyph_layouts)?;
             }
             renderer.draw(&shell.frame)?;
             let mut line = GoldenLine {
@@ -937,9 +940,10 @@ fn body(setup: Setup<'_>, window: WindowHandle) -> Result<i32, Fatal> {
         }
 
         if let Some(font) = &font
-            && shell.frame.texture_set == TextureSet::Clock
+            && shell.frame.texture_set != TextureSet::Opening
         {
             renderer.set_glyph_cache(font, &shell.frame.glyphs)?;
+            renderer.set_glyph_layouts(font, &shell.frame.glyph_layouts)?;
         }
         let Some(context) = device.begin_frame()? else {
             sdl::delay(10);

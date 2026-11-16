@@ -1,5 +1,6 @@
 // A Browser capture as a fixture for the Rust scene's console comparison (crates/scene/tests/console_browser.rs).
-//   node tools/browser/export_browser_fixture.mjs <capture name> [<out dir>]
+//   node tools/browser/export_browser_fixture.mjs <capture name> [<out dir>] [--pcs 0x213ba8,0x213f14,...]
+// --pcs keeps only the probe records at those program counters (a capture with the text verifiers' probes is too large whole).
 // Reads <captures>/<name>.trace.jsonl and, when present, <name>.gs; writes <out dir> (default
 // $CRYSTALOSD_DATA/fixtures/<name>):
 //   probes.json   every probe record of the trace (pc, probe index, capture frame, packet position, registers and the
@@ -24,7 +25,11 @@ const DIST = (process.env.WATSON_DIST ?? homes.WATSON_DIST).replace(/\\/g, '/').
 const { parseGsDump } = await import(`file:///${DIST}/gs/parse.js`);
 const { decodeRegister } = await import(`file:///${DIST}/gs/registers.js`);
 
-const [name, outArg] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const pcsAt = args.indexOf('--pcs');
+const keepPcs = pcsAt >= 0 ? new Set(args[pcsAt + 1].split(',').map((x) => parseInt(x, 16))) : null;
+if (pcsAt >= 0) args.splice(pcsAt, 2);
+const [name, outArg] = args;
 if (!name) { console.error('usage: node tools/browser/export_browser_fixture.mjs <capture name> [<out dir>]'); process.exit(2); }
 const CAPTURES = process.env.CRYSTALOSD_CAPTURES ?? homes.CAPTURES;
 const tracePath = path.join(CAPTURES, `${name}.trace.jsonl`);
@@ -42,7 +47,7 @@ const ROM_PCS = new Set([0x0024d500, 0x0024c238, 0x0024e440]);
 const rom = /rom-0230/.test(name) || trace.probes.some((p) => ROM_PCS.has(p.pc));
 const CARD = rom ? [0x0024c238, 0x0024d58c] : [0x002527a8, 0x002538f0];
 const MASTER = rom ? 0x0024d500 : 0x00253860;
-const probes = trace.probes.filter((p) => !p.preroll).map((p) => ({
+const probes = trace.probes.filter((p) => !p.preroll && (!keepPcs || keepPcs.has(p.pc))).map((p) => ({
   pc: p.pc, index: p.index ?? null, frame: p.captureFrame, at: p.at,
   gpr: p.gpr.map((g) => Number(BigInt.asUintN(32, BigInt(g)))),
   mem: p.mem.filter((m) => m.bytes).map((m) => ({ address: m.address, hex: hex(m.bytes) })),

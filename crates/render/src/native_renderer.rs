@@ -5,7 +5,10 @@ use ash::vk;
 use vk_mem::Alloc;
 
 use scene::font::Font;
-use scene::frame::{BlendOp, CoordinateKind, DepthTest, Frame, GLYPH_TEXTURE, GlyphCache, Pass, PassTopology, Sampling, SourceKind, TargetName, TextureSet};
+use scene::frame::{
+    BlendOp, CoordinateKind, DepthTest, Frame, GLYPH_LAYOUT_TEXTURE, GLYPH_TEXTURE, GlyphCache, Pass, PassTopology, Sampling, SourceKind, TargetName,
+    TextureSet,
+};
 
 use crate::device::Device;
 use crate::error::{Error, Result, check, runtime};
@@ -291,6 +294,7 @@ pub struct NativeRenderer<'d> {
     staging: Vec<GpuVertex>,
     ranges: Vec<(u32, u32)>,
     glyphs: GlyphCache,
+    glyph_layouts: Vec<GlyphCache>,
 }
 
 fn read_spirv(path: &Path) -> Result<Vec<u32>> {
@@ -328,6 +332,7 @@ impl<'d> NativeRenderer<'d> {
             staging: Vec::new(),
             ranges: Vec::new(),
             glyphs: GlyphCache::default(),
+            glyph_layouts: Vec::new(),
         };
         let d = device.device();
         // SAFETY: creating objects on a valid device; Drop destroys them (null handles are ignored).
@@ -579,6 +584,19 @@ impl<'d> NativeRenderer<'d> {
         let image = scene::text::glyph_cache_image(font, cache).map_err(|e| crate::error::Error::Runtime(e.0))?;
         self.set_texture(GLYPH_TEXTURE, 1u32 << cache.log_width, 1u32 << cache.log_height, &image)?;
         self.glyphs = cache.clone();
+        Ok(())
+    }
+
+    // The layouts a frame's cache passed through after its first (Frame::glyph_layouts), each its own texture.
+    pub fn set_glyph_layouts(&mut self, font: &Font, layouts: &[GlyphCache]) -> Result<()> {
+        if layouts == self.glyph_layouts.as_slice() {
+            return Ok(());
+        }
+        for (k, cache) in layouts.iter().enumerate() {
+            let image = scene::text::glyph_cache_image(font, cache).map_err(|e| crate::error::Error::Runtime(e.0))?;
+            self.set_texture(GLYPH_LAYOUT_TEXTURE + k as i32, 1u32 << cache.log_width, 1u32 << cache.log_height, &image)?;
+        }
+        self.glyph_layouts = layouts.to_vec();
         Ok(())
     }
 
@@ -1019,10 +1037,13 @@ impl<'d> NativeRenderer<'d> {
                 PushState { scene: [frame.width as f32, frame.height as f32, self.output.width as f32, self.output.height as f32], ..Default::default() };
             let mut view = self.blank.view;
             if m.source == SourceKind::Texture {
-                let Some(found) = self.textures.get(&(frame.texture_set as i32, m.texture)) else {
+                let layout = m.texture >= GLYPH_LAYOUT_TEXTURE && m.texture < GLYPH_LAYOUT_TEXTURE + frame.glyph_layouts.len() as i32;
+                let glyphs = (m.texture == GLYPH_TEXTURE || layout) && frame.texture_set != TextureSet::Opening;
+                let set = if glyphs { CLOCK_SET } else { frame.texture_set as i32 };
+                let Some(found) = self.textures.get(&(set, m.texture)) else {
                     return Err(runtime(format!("pass {}: no texture {}", pass.name, m.texture)));
                 };
-                if frame.texture_set == TextureSet::Clock && m.texture == GLYPH_TEXTURE && frame.glyphs != self.glyphs {
+                if glyphs && (frame.glyphs != self.glyphs || frame.glyph_layouts != self.glyph_layouts) {
                     return Err(runtime(format!("pass {}: the glyph cache set is not the frame's", pass.name)));
                 }
                 let image = &found.image;

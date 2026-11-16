@@ -179,11 +179,17 @@ fn address_of(m: &Material, min: i32, max: i32) -> Address {
     }
 }
 
-fn texture_of(m: &Material, layout: &Layout, glyphs: &GlyphCache) -> Texture {
+fn texture_of(m: &Material, layout: &Layout, frame: &Frame) -> Texture {
+    let layouts = &frame.glyph_layouts;
+    let later = m.texture - scene::frame::GLYPH_LAYOUT_TEXTURE;
     let (source, source_is_target, width, height) = if m.source == SourceKind::Target {
         let height = if m.source_height != 0 { m.source_height as u32 } else { layout.target_texture[1] };
         (layout.targets[m.source_target as usize].clone(), true, layout.target_texture[0], height)
     } else if m.texture == scene::frame::GLYPH_TEXTURE && !layout.textures.contains_key(&m.texture) {
+        let glyphs = &frame.glyphs;
+        (glyph_texture_id(glyphs), false, 1u32 << glyphs.log_width, 1u32 << glyphs.log_height)
+    } else if later >= 0 && (later as usize) < layouts.len() {
+        let glyphs = &layouts[later as usize];
         (glyph_texture_id(glyphs), false, 1u32 << glyphs.log_width, 1u32 << glyphs.log_height)
     } else {
         let image = layout.textures.get(&m.texture).unwrap_or_else(|| panic!("texture {} is not in the layout", m.texture));
@@ -232,7 +238,7 @@ pub fn from_scene(frame: &Frame, layout: &Layout) -> Vec<Pass> {
                     DepthTest::Greater => Test::Greater,
                 },
                 write: m.depth_write,
-                texture: if m.source == SourceKind::None { None } else { Some(texture_of(m, layout, &frame.glyphs)) },
+                texture: if m.source == SourceKind::None { None } else { Some(texture_of(m, layout, frame)) },
                 skip,
                 vertices: pass
                     .vertices

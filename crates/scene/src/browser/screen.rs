@@ -5,14 +5,17 @@
 
 use std::sync::Arc;
 
-use super::chrome::{BrowserFrame, ChromeState, DialogDraw, GUIDE_X_ENGLISH, Guide, GuideSlot, TITLE_RIGHT_COLOUR, Titles, chrome_frame};
+use super::chrome::{BrowserFrame, ChromeState, DialogDraw, GUIDE_X_ENGLISH, Guide, GuideSlot, TextRun, Titles, chrome_frame};
 use super::devices::{CursorState, LEFT, RIGHT, SlotInfo, SlotWords, cursor_step, header, scan_store, status_line, title_ids};
 use super::format::{format_draw, format_step};
 use super::shell::{ExitWords, Gate, PassInput, Shell, clamp, limits};
 use super::sounds::{self, Sent};
+use super::strings::{BrowserText, Place, TextWords};
+use crate::arithmetic::Arithmetic;
 use crate::menu_types::PadWords;
 use crate::program_image::ProgramImage;
 use crate::sound::SoundCommand;
+use crate::text::Text;
 
 const LANGUAGE_TABLES: u32 = 0x002a_d200;
 const GUIDE_X_TABLE: u32 = 0x002b_d2e0;
@@ -70,7 +73,7 @@ pub struct BrowserOutput {
     pub exit: Option<ExitWords>,
 }
 
-pub struct BrowserScreen {
+pub struct BrowserScreen<A: Arithmetic> {
     setup: BrowserSetup,
     pub shell: Shell,
     slots: [SlotWords; 2],
@@ -87,6 +90,7 @@ pub struct BrowserScreen {
     pub field: i32,
     pub spdif: Option<u16>,
     done: bool,
+    text: Option<BrowserText<A>>,
 }
 
 fn scan(cards: &[Option<CardSlot>; 2]) -> [SlotWords; 2] {
@@ -99,10 +103,12 @@ fn scan(cards: &[Option<CardSlot>; 2]) -> [SlotWords; 2] {
     })
 }
 
-impl BrowserScreen {
+impl<A: Arithmetic> BrowserScreen<A> {
     // The thread start (browser-shell.md section 1): the shell's start with the scan words the emulator's scan leaves, (1, 0), which
     // the native port may set (section 2: kind 0 opens whichever of (1,0) or (1,1)); D_001F0114 for the 0x8070 send (section 7).
-    pub fn start(setup: BrowserSetup, before: &Shell) -> Self {
+    // `text`: the font library and the program's font state as the clock leaves them (the context is shared); None draws no text.
+    pub fn start(setup: BrowserSetup, before: &Shell, text: Option<Text<A>>) -> Self {
+        let text = text.and_then(|t| setup_program(&setup).map(|p| BrowserText::new(t, p)));
         let shell = Shell::start(setup.pal, Some((1, 0)), before);
         let slots = scan(&setup.cards);
         let spdif = sounds::remote_a3(sounds::spdif_store(setup.mechacon_param));
@@ -130,6 +136,7 @@ impl BrowserScreen {
             field: 0,
             spdif,
             done: false,
+            text,
         }
     }
 
@@ -201,7 +208,7 @@ impl BrowserScreen {
     // to hddosd-110U-browser-chrome-leave and -session: the close disables slot 1; a page change disables every slot; on the root
     // page, once its fade-in is full, Back, plus Enter on a card and Options on the HDD item; on a card page Back, plus Enter while
     // the Format dialog is open. The dialog's words, the page, the cursor and the page fade-in are those at the pass's start.
-    fn guide_policy(&mut self, f0_start: i32, be4_start: i32, page: Page, cursor: i32, page_in: i32) {
+    fn guide_policy(&mut self, f0_start: i32, be4_start: i32, page: Page, cursor: i32, page_in: i32, format_start: bool) {
         if f0_start != 0 {
             if self.shell.f0 == limits(self.setup.pal).dialog - 1 && self.shell.be4 == 1 {
                 self.enable(2, false);
@@ -235,7 +242,7 @@ impl BrowserScreen {
             }
             Page::Card(_) => {
                 self.enable(1, true);
-                self.enable(2, self.format.is_some());
+                self.enable(2, format_start);
                 self.enable(3, false);
             }
         }
@@ -372,51 +379,82 @@ impl BrowserScreen {
                 let selected = self.items.get(self.cursor as usize).copied();
                 Titles {
                     left: self.concat(&[6]),
+                    left_free: None,
+                    right_shown: true,
                     right: selected.map(|i| self.device_name(&i)).unwrap_or_default(),
                     right_alpha: Some((self.title_counter * 8).min(0x80)),
                     right_second: Vec::new(),
                 }
             }
-            Page::Card(_) => Titles { left: Vec::new(), right: Vec::new(), right_alpha: Some(0x80), right_second: Vec::new() },
+            Page::Card(slot) => {
+                let item = Item { device: 2 + 4 * slot as i32, slot: Some(slot) };
+                let free = match header(&self.slots[slot]) {
+                    Ok(id) => self.string(id),
+                    Err(Some(t)) => self.printed(t.id, &t.args.iter().flatten().copied().collect::<Vec<_>>()),
+                    Err(None) => Vec::new(),
+                };
+                Titles {
+                    left: self.device_name(&item),
+                    left_free: Some(free),
+                    right_shown: false,
+                    right: Vec::new(),
+                    right_alpha: None,
+                    right_second: Vec::new(),
+                }
+            }
         }
     }
 
-    fn card_texts(&self, frame: &mut BrowserFrame) {
-        let Page::Card(slot) = self.page else { return };
-        let item = Item { device: 2 + 4 * slot as i32, slot: Some(slot) };
-        let at = frame.frame.passes.len();
-        let name = self.device_name(&item);
-        frame.texts.push(super::chrome::TextRun { label: "card header", text: name, colour: TITLE_RIGHT_COLOUR, alpha: Some(0x80), before_pass: at });
-        let words = &self.slots[slot];
-        let line = match header(words) {
-            Ok(id) => self.string(id),
-            Err(Some(t)) => self.printed(t.id, &t.args.iter().flatten().copied().collect::<Vec<_>>()),
-            Err(None) => Vec::new(),
-        };
-        frame.texts.push(super::chrome::TextRun { label: "card free", text: line, colour: TITLE_RIGHT_COLOUR, alpha: Some(0x80), before_pass: at });
-        let flags = if self.slots[slot].formatted == 0 { 8 } else { 0 };
-        if let Some(status) = status_line(flags, item.device, self.empty, self.page_in, i32::from(self.setup.pal), 1, 0) {
-            if let Some(dialog) = self.format
-                && let Some(draw) = format_draw(dialog.state, dialog.cursor)
-            {
-                for id in draw.ids {
-                    frame.texts.push(super::chrome::TextRun {
-                        label: "format dialog",
-                        text: self.string(id),
-                        colour: 0x606060,
-                        alpha: Some(status.alpha),
-                        before_pass: at,
-                    });
-                }
+    // The format 0x00366490 ("\x07c%1d%s    \x07c%1d%s") with the colours and the strings Yes (0x31) and No (0x32).
+    fn yes_no(&self, colours: [i32; 2]) -> Vec<u8> {
+        let format = self.setup.program.as_ref().map(|p| p.string(0x0036_6490)).unwrap_or_default();
+        let words = [self.string(0x31), self.string(0x32)];
+        let mut out = Vec::new();
+        let (mut d, mut w) = (colours.iter(), words.iter());
+        let mut i = 0;
+        while i < format.len() {
+            if format[i] == b'%' && i + 2 < format.len() && format[i + 1] == b'1' && format[i + 2] == b'd' {
+                out.extend_from_slice(d.next().map_or(0, |v| *v).to_string().as_bytes());
+                i += 3;
+            } else if format[i] == b'%' && i + 1 < format.len() && format[i + 1] == b's' {
+                out.extend_from_slice(w.next().map_or(&[][..], |v| &v[..]));
+                i += 2;
             } else {
-                frame.texts.push(super::chrome::TextRun {
-                    label: "status line",
-                    text: self.string(status.id),
-                    colour: 0x606060,
-                    alpha: Some(status.alpha),
-                    before_pass: at,
-                });
+                out.push(format[i]);
+                i += 1;
             }
+        }
+        out
+    }
+
+    // 0x002516F0: on a card page the status line, or the Format dialog's render 0x00255868 while the dialog word is 1, when the
+    // fade word 0x00370764 is not 0 and the page fade-in is at least 10 (the dialog also not while the page fades out) (read).
+    // APP POLICY, measured on hddosd-110U-browser-text-session2 (Left at 391, Circle at 451): the dialog drawn, and slot 2 of the
+    // guide, are the dialog as it was at the pass's start; the pass's press shows in the next pass.
+    fn card_texts(&self, frame: &mut BrowserFrame, format: Option<FormatDialog>) {
+        let Page::Card(slot) = self.page else { return };
+        if self.empty == 0 || self.page_in < 10 {
+            return;
+        }
+        let device = 2 + 4 * slot as i32;
+        let at = frame.frame.passes.len();
+        let flags = if self.slots[slot].formatted == 0 { 8 } else { 0 };
+        let Some(status) = status_line(flags, device, self.empty, self.page_in, i32::from(self.setup.pal), 1, 0) else { return };
+        let run = |label, text: Vec<u8>, place| TextRun { label, text, colour: 0x606060, alpha: Some(status.alpha), before_pass: at, place: Some(place) };
+        if let Some(dialog) = format {
+            if self.transition.is_some() {
+                return;
+            }
+            let Some(draw) = format_draw(dialog.state, dialog.cursor) else { return };
+            let mut lines: Vec<Vec<u8>> = draw.ids.iter().take(2).map(|&id| self.string(id)).collect();
+            if let Some(colours) = draw.colours {
+                lines.push(self.yes_no(colours));
+            }
+            let place = Place::Format { lines: lines.clone(), heights: draw.heights.clone(), alpha: status.alpha };
+            frame.texts.push(run("format dialog", lines.concat(), place));
+        } else {
+            let text = self.string(status.id);
+            frame.texts.push(run("status line", text.clone(), Place::Status { text, alpha: status.alpha }));
         }
     }
 
@@ -428,7 +466,7 @@ impl BrowserScreen {
         let mut out = Vec::new();
         let edge = pad.pressed;
         let pal = self.setup.pal;
-        let (page_start, cursor_start, page_in_start) = (self.page, self.cursor, self.page_in);
+        let (page_start, cursor_start, page_in_start, format_start) = (self.page, self.cursor, self.page_in, self.format);
         let idle = self.shell.leave == 0 && self.shell.f0 == 0;
         let gate = Gate {
             view: 1,
@@ -456,7 +494,7 @@ impl BrowserScreen {
         let leave_before = self.shell.leave;
         let trail = self.shell.step(&gate, &PassInput { edge, ..PassInput::default() }, Some(asked));
         self.step_guide();
-        self.guide_policy(dialog_before.0, dialog_before.1, page_start, cursor_start, page_in_start);
+        self.guide_policy(dialog_before.0, dialog_before.1, page_start, cursor_start, page_in_start, format_start.is_some());
         self.title_counter = if self.transition.is_some() { (self.title_counter - 1).max(0) } else { (self.title_counter + 1).min(16) };
 
         let state = ChromeState {
@@ -493,7 +531,22 @@ impl BrowserScreen {
         };
         let state = if state.dialog.as_ref().is_some_and(|d| d.n + d.step < 0) { ChromeState { dialog: None, ..state } } else { state };
         let mut frame = chrome_frame(&state, trail.alpha);
-        self.card_texts(&mut frame);
+        self.card_texts(&mut frame, format_start);
+        let words = TextWords {
+            width: self.setup.width,
+            aspect: 0,
+            mode: self.shell.mode,
+            device: match self.page {
+                Page::Root => 0,
+                Page::Card(slot) => 2 + 4 * slot as i32,
+            },
+            page_in: self.page_in,
+            language: self.language(),
+            vidmode: self.guide_swap(),
+        };
+        if let Some(text) = &mut self.text {
+            text.draw(&mut frame, &words);
+        }
         self.step_page();
         self.field ^= 1;
         let exit = if trail.exited { Some(self.shell.exit) } else { None };
@@ -523,4 +576,8 @@ impl BrowserScreen {
             None => GUIDE_X_ENGLISH,
         }
     }
+}
+
+fn setup_program(setup: &BrowserSetup) -> Option<Arc<ProgramImage>> {
+    setup.program.clone()
 }

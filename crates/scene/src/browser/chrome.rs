@@ -3,6 +3,7 @@
 // kept as runs (string, colour, alpha, where it falls among the passes): its glyph geometry is not stated by the facts.
 
 use super::shell::Fade;
+use super::strings::Place;
 use crate::frame::{BlendOp, Frame, Material, Pass, PassTopology, Sampling, SourceKind, TargetName, TextureSet, Vertex};
 
 // browser_texture_indices (0x002BD160): the TEXB sheets the chrome draws, as Browser texture numbers (TEXIMAGE members 53..60).
@@ -68,6 +69,8 @@ pub struct TextRun {
     // None: the alpha the console uses here is not stated (an accept rule: one alpha up to 0x80 over the run).
     pub alpha: Option<i32>,
     pub before_pass: usize,
+    // The caller that draws it (strings.rs); None where the glyphs are not drawn (ROM 2.30, a by-shape check).
+    pub place: Option<Place>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -106,6 +109,8 @@ pub struct Guide {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Titles {
     pub left: Vec<u8>,
+    pub left_free: Option<Vec<u8>>,
+    pub right_shown: bool,
     pub right: Vec<u8>,
     pub right_alpha: Option<i32>,
     pub right_second: Vec<u8>,
@@ -158,8 +163,8 @@ impl Out {
         self.passes.push(Pass { name: name.to_owned(), target: TargetName::Display, topology, material, half_line: true, vertices, ..Pass::default() });
     }
 
-    fn text(&mut self, label: &'static str, text: &[u8], colour: u32, alpha: Option<i32>) {
-        self.texts.push(TextRun { label, text: text.to_vec(), colour, alpha, before_pass: self.passes.len() });
+    fn text(&mut self, label: &'static str, text: &[u8], colour: u32, alpha: Option<i32>, place: Option<Place>) {
+        self.texts.push(TextRun { label, text: text.to_vec(), colour, alpha, before_pass: self.passes.len(), place });
     }
 
     // A sprite in GS primitive space (12.4, the screen's origin added): both corners carry the second corner's depth, as the GS
@@ -236,11 +241,12 @@ fn dialog(s: &ChromeState, d: &DialogDraw, out: &mut Out, o: (i32, i32)) {
     let fix = (n * 0x54) / 0x1e;
     out.sprite("browser dialog", flat(BlendOp::FixedOver, fix as u8), [o.0, o.1, (s.width << 4) + o.0, (s.height << 4) + o.1], [0; 4], 4, [0, 0, 0, 0x80], o);
     let alpha = (n << 7) / 0x1e;
+    let mut place = (!s.rom).then(|| Place::Dialog { lines: d.lines.clone(), n });
     for line in &d.lines {
         if line.is_empty() {
             break;
         }
-        out.text("dialog line", line, TEXT_COLOUR, Some(alpha));
+        out.text("dialog line", line, TEXT_COLOUR, Some(alpha), place.take());
     }
 }
 
@@ -270,7 +276,8 @@ fn guide(s: &ChromeState, out: &mut Out, o: (i32, i32)) {
             slot.s4
         };
         let alpha = (slot.counter * 8).min(0x80);
-        out.text("guide label", &slot.label, TEXT_COLOUR, Some(alpha));
+        let place = (!s.rom).then(|| Place::Guide { s4: slot.s4, counter: slot.counter, label: slot.label.clone() });
+        out.text("guide label", &slot.label, TEXT_COLOUR, Some(alpha), place);
         let u = if s2 >= 2 { 0x208 } else { 8 };
         let v = if s2 == 1 || s2 == 2 { 0x208 } else { 8 };
         let px = if s2 == 3 { g.slot3_x } else { g.xs[s2 as usize] };
@@ -310,13 +317,27 @@ pub fn chrome_frame(s: &ChromeState, fade_alpha: Option<i32>) -> BrowserFrame {
     clear(s, &mut out, o);
     gradient(s, &mut out);
     tiles(s, &mut out, o);
+    let t = &s.titles;
     if s.rom {
-        out.text("titles", &s.titles.left, TITLE_LEFT_COLOUR, Some(title_alpha(s.page_in)));
-        out.text("titles", &s.titles.right, TITLE_RIGHT_COLOUR, s.titles.right_alpha);
+        out.text("titles", &t.left, TITLE_LEFT_COLOUR, Some(title_alpha(s.page_in)), None);
+        out.text("titles", &t.right, TITLE_RIGHT_COLOUR, t.right_alpha, None);
     } else {
-        out.text("title left", &s.titles.left, TITLE_LEFT_COLOUR, Some(title_alpha(s.page_in)));
-        out.text("title right", &s.titles.right, TITLE_RIGHT_COLOUR, s.titles.right_alpha);
-        out.text("title right, second string", &s.titles.right_second, TITLE_RIGHT_COLOUR, s.titles.right_alpha);
+        let left_colour = if t.left_free.is_some() { TITLE_RIGHT_COLOUR } else { TITLE_LEFT_COLOUR };
+        out.text(
+            "title left",
+            &t.left,
+            left_colour,
+            Some(title_alpha(s.page_in)),
+            Some(Place::TitleLeft { record: t.left.clone(), free: t.left_free.clone() }),
+        );
+        if let Some(free) = &t.left_free {
+            out.text("free line", free, TITLE_RIGHT_COLOUR, Some(title_alpha(s.page_in)), None);
+        }
+        if t.right_shown {
+            let place = Place::TitleRight { first: t.right.clone(), second: t.right_second.clone(), alpha: t.right_alpha.unwrap_or(0x80) };
+            out.text("title right", &t.right, TITLE_RIGHT_COLOUR, t.right_alpha, Some(place));
+            out.text("title right, second string", &t.right_second, TITLE_RIGHT_COLOUR, t.right_alpha, None);
+        }
     }
     if let Some(d) = &s.dialog {
         dialog(s, d, &mut out, o);

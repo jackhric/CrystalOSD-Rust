@@ -39,6 +39,7 @@ pub struct Options {
     pub memory_cards: [PathBuf; 2],
     pub browser_shots: PathBuf,
     pub browser_script: PathBuf,
+    pub browser_shots_output: [u32; 3],
 }
 
 impl Default for Options {
@@ -80,6 +81,7 @@ impl Default for Options {
             memory_cards: [PathBuf::new(), PathBuf::new()],
             browser_shots: PathBuf::new(),
             browser_script: PathBuf::new(),
+            browser_shots_output: [640, 448, 1],
         }
     }
 }
@@ -258,6 +260,13 @@ pub fn parse(args: &[String]) -> Parsed {
             "--memory-card-2" if more => options.memory_cards[1] = next!().into(),
             "--browser-shots" if more => options.browser_shots = next!().into(),
             "--browser-script" if more => options.browser_script = next!().into(),
+            "--browser-shots-output" if more => {
+                let text = next!();
+                let parts: Vec<u32> = text.split('x').filter_map(|p| p.parse().ok()).collect();
+                if parts.len() == 3 && parts.iter().all(|&p| p > 0) {
+                    options.browser_shots_output = [parts[0], parts[1], parts[2]];
+                }
+            }
             _ => {
                 eprint!("{USAGE}");
                 return Parsed::Exit(1);

@@ -108,6 +108,28 @@ pub struct Tally {
     pub glyphs: usize,
     pub card: usize,
     pub head_clears: usize,
+    pub text_frames: usize,
+    pub fans: usize,
+}
+
+// A frame whose other passes the facts do not specify (a background variant): its text alone, every glyph fan against the
+// console's, in order.
+pub fn compare_text(ours: &BrowserFrame, theirs: &Value, width: i32, height: i32, tally: &mut Tally) -> Result<(), String> {
+    let console: Vec<Pass> = at(theirs, "passes").as_array().unwrap().iter().filter(|p| !p["card"].as_bool().unwrap_or(false)).map(read_pass).collect();
+    let display = console.first().map(|p| p.target.clone()).ok_or("the frame has no pass")?;
+    let mine = merge(from_scene(&ours.frame, &browser_layout(&display, width, height)).into_iter().filter(is_text).collect());
+    let console = merge(console.into_iter().filter(is_text).collect());
+    if mine.len() != console.len() {
+        return Err(format!("text: {} scene passes, {} console passes", mine.len(), console.len()));
+    }
+    for (k, (a, b)) in mine.iter().zip(&console).enumerate() {
+        if let Some(d) = pass_difference(a, b) {
+            return Err(format!("text pass {k} ({}): {d}", a.name));
+        }
+        tally.fans += a.vertices.len() / 30;
+    }
+    tally.text_frames += 1;
+    Ok(())
 }
 
 // One frame: the scene's passes (merged) against the console's non-card passes (merged), text by runs, in order.
@@ -135,6 +157,29 @@ pub fn compare(ours: &BrowserFrame, theirs: &Value, width: i32, height: i32, rom
     tally.card += at(theirs, "passes").as_array().unwrap().iter().filter(|p| p["card"].as_bool().unwrap_or(false)).count();
     let display = console.first().map(|p| p.target.clone()).ok_or("the frame has no pass")?;
     let mine = from_scene(&ours.frame, &browser_layout(&display, width, height));
+    // The scene draws its own glyphs (scene::browser::strings): every pass, the text's fans with them, against the console's.
+    if mine.iter().any(is_text) {
+        let mine = merge(mine);
+        let console = merge(console);
+        if mine.len() != console.len() {
+            let names = |list: &[Pass]| -> Vec<String> {
+                list.iter().map(|p| format!("{:?} {}", p.primitive, p.texture.as_ref().map_or("flat", |t| t.source.as_str()))).collect()
+            };
+            return Err(format!("{} scene passes {:?}, {} console passes {:?}", mine.len(), names(&mine), console.len(), names(&console)));
+        }
+        for (k, (a, b)) in mine.iter().zip(&console).enumerate() {
+            if let Some(d) = pass_difference(a, b) {
+                return Err(format!("pass {k} ({}): {d}", a.name));
+            }
+            if is_text(a) {
+                tally.fans += a.vertices.len() / 30;
+            }
+            tally.vertices += a.vertices.len();
+        }
+        tally.passes += mine.len();
+        tally.frames += 1;
+        return Ok(());
+    }
     let mut groups: Vec<(usize, Vec<&TextRun>)> = Vec::new();
     for run in &ours.texts {
         match groups.last_mut() {

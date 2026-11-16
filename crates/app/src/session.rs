@@ -171,7 +171,7 @@ pub struct Session {
     pub boot_clock_forced: bool,
     pub boot_rand: u32,
     pub error: Option<Fatal>,
-    pub browser: Option<BrowserScreen>,
+    pub browser: Option<BrowserScreen<NativeArithmetic>>,
     pub browser_phase: BrowserPhase,
     pub browser_words: BrowserWords,
     pub clock_wide: bool,
@@ -477,7 +477,8 @@ impl Session {
             cards: self.config.memory_cards,
             program: Some(self.config.program.clone()),
         };
-        let browser = BrowserScreen::start(setup, &self.browser_words);
+        let text = self.clock.as_ref().and_then(|c| c.text().cloned());
+        let browser = BrowserScreen::start(setup, &self.browser_words, text);
         if let (Some(audio), Some(a3)) = (&mut self.audio, browser.spdif) {
             audio.push_spdif(a3);
         }
