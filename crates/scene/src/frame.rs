@@ -44,6 +44,7 @@ pub enum TextureSet {
     #[default]
     Clock,
     Opening,
+    Browser,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]

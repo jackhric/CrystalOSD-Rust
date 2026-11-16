@@ -36,6 +36,9 @@ pub struct Options {
     pub golden: String,
     pub golden_file: PathBuf,
     pub golden_output: String,
+    pub memory_cards: [PathBuf; 2],
+    pub browser_shots: PathBuf,
+    pub browser_script: PathBuf,
 }
 
 impl Default for Options {
@@ -74,11 +77,14 @@ impl Default for Options {
             golden: String::new(),
             golden_file: PathBuf::new(),
             golden_output: "native".to_owned(),
+            memory_cards: [PathBuf::new(), PathBuf::new()],
+            browser_shots: PathBuf::new(),
+            browser_script: PathBuf::new(),
         }
     }
 }
 
-pub const USAGE: &str = "usage: CrystalOSD [--resources dir] [--bios rom.bin] [--smoke] [--soak seconds] [--skip-boot] [--clock] [--pal] [--language N] [--aspect N] [--towers none|demo] [--lights-phase N] [--opening-textures dir] [--capture all|n,n,...] [--mute] [--audio-wav out.wav] [--log file] [--trace file.jsonl] [--profile] [--golden record|check file] [--golden-output native|x2-msaa4] [--no-validation] [--validate sync] [--shaders dir]\n                    [--settings settings.json] [--no-save] [--screenshots dir] [--textures dir] [--mesh rod-mesh.json] [--cube-mesh cube-mesh.json] [--font FNTOSD] [--program hddosd.elf]\n";
+pub const USAGE: &str = "usage: CrystalOSD [--resources dir] [--bios rom.bin] [--smoke] [--soak seconds] [--skip-boot] [--clock] [--pal] [--language N] [--aspect N] [--towers none|demo] [--lights-phase N] [--opening-textures dir] [--capture all|n,n,...] [--mute] [--audio-wav out.wav] [--log file] [--trace file.jsonl] [--profile] [--golden record|check file] [--golden-output native|x2-msaa4] [--no-validation] [--validate sync] [--shaders dir]\n                    [--settings settings.json] [--no-save] [--screenshots dir] [--textures dir] [--mesh rod-mesh.json] [--cube-mesh cube-mesh.json] [--font FNTOSD] [--program hddosd.elf]\n                    [--memory-card-1 card.ps2] [--memory-card-2 card.ps2] [--browser-shots dir --browser-script steps.json]\n";
 
 fn skip_space(s: &[u8]) -> usize {
     s.iter().take_while(|c| matches!(c, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r')).count()
@@ -248,6 +254,10 @@ pub fn parse(args: &[String]) -> Parsed {
                 i += 2;
             }
             "--golden-output" if more && (args[i + 1] == "native" || args[i + 1] == "x2-msaa4") => options.golden_output = next!(),
+            "--memory-card-1" if more => options.memory_cards[0] = next!().into(),
+            "--memory-card-2" if more => options.memory_cards[1] = next!().into(),
+            "--browser-shots" if more => options.browser_shots = next!().into(),
+            "--browser-script" if more => options.browser_script = next!().into(),
             _ => {
                 eprint!("{USAGE}");
                 return Parsed::Exit(1);

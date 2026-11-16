@@ -1,6 +1,7 @@
 #![allow(clippy::neg_cmp_op_on_partial_ord, clippy::needless_range_loop)]
 
 pub mod arithmetic;
+pub mod browser;
 pub mod camera;
 pub mod clock;
 pub mod clock_date;
