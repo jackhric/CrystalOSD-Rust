@@ -595,9 +595,17 @@ impl<'d> NativeRenderer<'d> {
         Ok(())
     }
 
+    // The size in texels of the clock set's texture `number`, as uploaded.
+    pub fn texture_extent(&self, number: i32) -> Option<[u32; 2]> {
+        self.textures.get(&(CLOCK_SET, number)).map(|t| [t.image.width, t.image.height])
+    }
+
     // The layouts a frame's cache passed through after its first (Frame::glyph_layouts), each its own texture.
     pub fn set_glyph_layouts(&mut self, font: &Font, layouts: &[GlyphCache]) -> Result<()> {
         if layouts == self.glyph_layouts.as_slice() {
+            return Ok(());
+        }
+        if self.set_sharp_glyph_layouts(font, layouts)? {
             return Ok(());
         }
         for (k, cache) in layouts.iter().enumerate() {
@@ -661,6 +669,7 @@ impl<'d> NativeRenderer<'d> {
         self.output = *output;
         if self.sharp.is_some() {
             self.glyphs = GlyphCache::default();
+            self.glyph_layouts.clear();
         }
         self.alpha_bound = [0; TARGETS];
         let samples = vk::SampleCountFlags::from_raw(output.samples);

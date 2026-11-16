@@ -17,7 +17,7 @@ project.
 | Browser: shell, page chrome, device logic, text | Written from upstream's measured pages and checked against the console |
 | Browser: 3D device row | Drawing is verified; the models' motion is not measured yet, so the app does not show them |
 | Browser: save list, save icons, Copy, Delete | Not started |
-| `--text sharp` | Optional. Draws text from outlines traced from the console's font |
+| `--text sharp` | Optional. Draws Latin text from TeX Gyre Heros, fitted glyph by glyph to the console's font; the rest from outlines traced from it |
 
 ## Build and run
 
@@ -57,7 +57,7 @@ The app reads the console's resource files from `Resources/`, or from the folder
 | `scene` | The logic: one `Frame` of draw passes per tick. No graphics API |
 | `audio` | The console's sound queue, sound driver and SPU2, emulated |
 | `render` | Vulkan renderer (`ash`) that draws a `Frame` at any resolution |
-| `glyph_enhance` | Traces the font's glyphs into outlines for `--text sharp` |
+| `glyph_enhance` | The outlines `--text sharp` draws: TeX Gyre Heros fitted to the console's glyphs (`crystalosd-heros-fit`), and the glyphs traced |
 | `app` | The `crystalosd` binary: window, input, settings, golden gate |
 
 ## Sony's data
@@ -68,3 +68,6 @@ are not covered by this repository's licence.
 ## Licence
 
 GPL-3.0, as upstream. See `LICENSE`.
+
+`fonts/texgyreheros-regular.otf` is TeX Gyre Heros, unmodified, under the GUST Font License; `fonts/README.md`
+says what that asks of a copy of this repository.
